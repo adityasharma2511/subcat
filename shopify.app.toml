@@ -1,0 +1,42 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "b210868519badacaf28ab2774abf9846"
+name = "Try us - AR"
+handle = "try-us-ar"
+application_url = "https://def-catalogs-jamie-bk.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "chichaus-essentials.myshopify.com"
+include_config_on_deploy = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "write_products"
+
+[auth]
+redirect_urls = [
+  "https://def-catalogs-jamie-bk.trycloudflare.com/auth/callback",
+  "https://def-catalogs-jamie-bk.trycloudflare.com/auth/shopify/callback",
+  "https://def-catalogs-jamie-bk.trycloudflare.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+[app_proxy]
+url = "https://def-catalogs-jamie-bk.trycloudflare.com/frontrequest"
+subpath = "aditya"
+prefix = "apps"
+
+[pos]
+embedded = false
