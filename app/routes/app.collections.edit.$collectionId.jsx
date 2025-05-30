@@ -32,13 +32,17 @@ const {
 } = Polaris;
 import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit, useNavigation, useParams, Link } from "@remix-run/react";
+import { useLoaderData, useActionData, useSubmit, useNavigate, useNavigation, useParams, Link, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { PlusIcon, MinusIcon, SearchIcon, XIcon, FilterIcon } from "@shopify/polaris-icons";
 
 export const loader = async ({ request, params }) => {
   const { admin } = await authenticate.admin(request);
   const { collectionId } = params;
+  
+  // Check if this is a refetch request
+  const url = new URL(request.url);
+  const isRefetch = url.searchParams.get("_action") === "refetch";
   
   try {
     // Fetch collection details
@@ -762,8 +766,8 @@ export const action = async ({ request, params }) => {
           // Create new metafield
           const createResponse = await admin.graphql(
             `#graphql
-            mutation createSubcategoriesMetafield($input: MetafieldsSetInput!) {
-              metafieldsSet(input: $input) {
+            mutation createSubcategoriesMetafield($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
                 metafields {
                   id
                   value
@@ -790,17 +794,15 @@ export const action = async ({ request, params }) => {
             }`,
             {
               variables: {
-                input: {
-                  metafields: [
-                    {
-                      namespace: "custom",
-                      key: "subcat",
-                      ownerId: `gid://shopify/Collection/${collectionId}`,
-                      type: "list.collection_reference",
-                      value: JSON.stringify([newCollection.id])
-                    }
-                  ]
-                }
+                metafields: [
+                  {
+                    namespace: "custom",
+                    key: "subcat",
+                    ownerId: `gid://shopify/Collection/${collectionId}`,
+                    type: "list.collection_reference",
+                    value: JSON.stringify([newCollection.id])
+                  }
+                ]
               }
             }
           );
@@ -884,11 +886,11 @@ export const action = async ({ request, params }) => {
           );
           const responseJson = await response.json();
           
-          if (responseJson.data?.metafieldUpdate?.userErrors?.length > 0) {
+          if (responseJson.data?.metafieldsSet?.userErrors?.length > 0) {
             return json({
               success: false,
               message: "Failed to update subcategories: " + 
-                responseJson.data.metafieldUpdate.userErrors.map(e => e.message).join(", ")
+                responseJson.data.metafieldsSet.userErrors.map(e => e.message).join(", ")
             });
           }
         } else if (subcategoryIds.length > 0) {
@@ -1052,11 +1054,11 @@ export const action = async ({ request, params }) => {
         
         const responseJson = await response.json();
         
-        if (responseJson.data?.metafieldUpdate?.userErrors?.length > 0) {
+        if (responseJson.data?.metafieldsSet?.userErrors?.length > 0) {
           return json({
             success: false,
             message: "Failed to update subcategories: " + 
-              responseJson.data.metafieldUpdate.userErrors.map(e => e.message).join(", ")
+              responseJson.data.metafieldsSet.userErrors.map(e => e.message).join(", ")
           });
         }
         
@@ -1230,9 +1232,15 @@ export default function EditCollection() {
   const { collection, collections, products, pageInfo, isSmartCollection, subcategories, subcategoriesMetafieldId, error } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
+  const navigate = useNavigate();
   const navigation = useNavigation();
   const isLoading = navigation.state === "submitting";
   const { collectionId } = useParams();
+  const [searchParams] = useSearchParams();
+  
+  // Extract return URL and focus parameters
+  const returnTo = searchParams.get("returnTo");
+  const focusSubcategories = searchParams.get("focusSubcategories") === "true";
 
   // State for form fields
   const [title, setTitle] = useState(collection?.title || "");
@@ -1309,17 +1317,26 @@ export default function EditCollection() {
       // If we have updated subcategories from the server, update the UI
       if (actionData.subcategories) {
         setSubcategoriesList(actionData.subcategories);
+      } 
+      // Only add a single subcategory if we don't have the full list
+      else if (actionData.subcategory) {
+        setSubcategoriesList(prev => [...prev, actionData.subcategory]);
       }
       
       // If we have a new metafield ID, update the state
       if (actionData.metafieldId && actionData.metafieldId !== subcategoriesMetafieldId) {
-        // We would need to reload to get the updated metafield ID
-        window.location.reload();
-      }
-      
-      // If a new subcategory was created
-      if (actionData.subcategory) {
-        setSubcategoriesList(prev => [...prev, actionData.subcategory]);
+        // Instead of reloading the page, refetch the data
+        if (typeof window !== 'undefined') {
+          // Create a form data to fetch the latest data
+          const formData = new FormData();
+          formData.append("_action", "refetch");
+          
+          // Submit the form with method=get to refresh data without reloading the page
+          submit(formData, { 
+            method: "get",
+            replace: true
+          });
+        }
       }
       
       // Show success message
@@ -1330,7 +1347,7 @@ export default function EditCollection() {
       // Show error message
       showToast(actionData.message);
     }
-  }, [actionData, subcategoriesMetafieldId]);
+  }, [actionData, subcategoriesMetafieldId, submit]);
   
   // Handle toast visibility
   const toggleActiveToast = useCallback(() => setActiveToast((active) => !active), []);
@@ -1490,14 +1507,6 @@ export default function EditCollection() {
     submit(formData, { method: "post" });
   };
   
-  const handleOpenCreateSubcatModal = () => {
-    setIsCreateSubcatModalOpen(true);
-    // Reset form fields
-    setNewSubcatTitle("");
-    setNewSubcatDescription("");
-    setNewSubcatImageUrl("");
-  };
-  
   const handleCreateSubcategory = () => {
     if (!newSubcatTitle.trim()) {
       showToast("Subcategory title is required");
@@ -1519,8 +1528,19 @@ export default function EditCollection() {
     // Close the modal and reset form
     setIsCreateSubcatModalOpen(false);
     setIsCreatingSubcat(false);
+    setNewSubcatTitle("");
+    setNewSubcatDescription("");
+    setNewSubcatImageUrl("");
     
     showToast("Creating subcategory...");
+    
+    // If there's a returnTo path and we're specifically on subcategory creation, navigate back after creation
+    if (returnTo && focusSubcategories) {
+      // Add a slight delay to allow the toast to be visible and data to be saved
+      setTimeout(() => {
+        navigate(`${returnTo}?fromCollectionId=${collectionId}&refresh=true`);
+      }, 1500);
+    }
   };
   
   const handleRemoveSubcategory = (subcatId) => {
@@ -1572,6 +1592,14 @@ export default function EditCollection() {
     submit(formData, { method: "post" });
     
     showToast('Collection successfully updated');
+    
+    // If there's a returnTo path, navigate back after saving
+    if (returnTo) {
+      // Add a slight delay to allow the toast to be visible
+      setTimeout(() => {
+        navigate(`${returnTo}?fromCollectionId=${collectionId}`);
+      }, 1000);
+    }
   };
 
   const handleSearchProducts = async () => {
@@ -1806,6 +1834,48 @@ export default function EditCollection() {
     return Object.values(checkedProducts).filter(Boolean).length;
   };
 
+  const handleSearchSubcategories = async () => {
+    if (!subcatSearchQuery.trim()) return;
+    
+    setIsSearchingSubcats(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append("action", "search_collections");
+      formData.append("searchQuery", subcatSearchQuery);
+      
+      submit(formData, { method: "post" });
+    } catch (error) {
+      console.error("Error searching collections:", error);
+      showToast("Error searching collections: " + error.message);
+    } finally {
+      setIsSearchingSubcats(false);
+    }
+  };
+
+  // After handleSearchSubcategories function but before if (error) condition
+
+  // Define handleOpenCreateSubcatModal 
+  const handleOpenCreateSubcatModal = useCallback(() => {
+    setIsCreateSubcatModalOpen(true);
+    // Reset form fields
+    setNewSubcatTitle("");
+    setNewSubcatDescription("");
+    setNewSubcatImageUrl("");
+  }, []);
+  
+  // Auto-open modal if focusSubcategories parameter is present
+  useEffect(() => {
+    if (focusSubcategories) {
+      // Automatically open the create subcategory modal after a short delay
+      const timer = setTimeout(() => {
+        handleOpenCreateSubcatModal();
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [focusSubcategories, handleOpenCreateSubcatModal]);
+
   if (error) {
     return (
       <Frame>
@@ -1839,7 +1909,13 @@ export default function EditCollection() {
     <Frame>
       <Page
         title={`Edit Collection: ${collection.title}`}
-        backAction={{ url: "/app/dashboard", content: "Collections" }}
+        backAction={returnTo ? { 
+          url: `${returnTo}?fromCollectionId=${collectionId}`, 
+          content: "Back to Collections Manager" 
+        } : { 
+          url: "/app/dashboard", 
+          content: "Collections" 
+        }}
       >
         {activeToast && (
           <Toast content={toastMessage} onDismiss={toggleActiveToast} />
@@ -2155,7 +2231,9 @@ export default function EditCollection() {
                   
                   {subcategoriesList.length > 0 ? (
                     <ResourceList
-                      items={subcategoriesList}
+                      items={subcategoriesList.filter((subcategory, index, self) => 
+                        index === self.findIndex(s => s.id === subcategory.id)
+                      )}
                       renderItem={(subcategory) => {
                         const { id, title, image } = subcategory;
                         const media = (
@@ -2500,7 +2578,9 @@ export default function EditCollection() {
           </Modal>
           
           <InlineStack align="end">
-            <Button url="/app/dashboard">Cancel</Button>
+            <Button url={returnTo ? `${returnTo}?fromCollectionId=${collectionId}` : "/app/dashboard"}>
+              Cancel
+            </Button>
             <Button primary onClick={handleUpdateCollection} loading={isLoading}>
               Save Changes
             </Button>
