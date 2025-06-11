@@ -594,7 +594,7 @@ export const action = async ({ request, params }) => {
     else if (actionName === "create_subcategory") {
       // Get subcategory details
       const title = requestBody.title;
-      const description = requestBody.description || "";
+      const description = requestBody.description || '';
       const imageUrl = requestBody.imageUrl || "";
       
       if (!title) {

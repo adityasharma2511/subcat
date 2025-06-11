@@ -1,8 +1,15 @@
-import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import {
+  Link,
+  Outlet,
+  useLoaderData,
+  useRouteError,
+  useNavigation,
+} from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import { Page, Spinner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
@@ -28,6 +35,8 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { apiKey, shop } = useLoaderData();
+  const navigation = useNavigation();
+  const isLoading = navigation.state === "loading";
 
   // Only render app content if we have the required props
   if (!apiKey) {
@@ -44,7 +53,20 @@ export default function App() {
         <Link to="/app/products">Products</Link>
         <Link to="/app/dashboard">Collections</Link>
       </NavMenu>
-      <Outlet />
+      {isLoading ? (
+        <Page>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            height: '100vh'
+          }}>
+            <Spinner />
+          </div>
+        </Page>
+      ) : (
+        <Outlet />
+      )}
     </AppProvider>
   );
 }

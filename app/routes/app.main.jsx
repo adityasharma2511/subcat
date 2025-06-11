@@ -1,7 +1,7 @@
 import * as Polaris from '@shopify/polaris';
 import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useLocation, useSubmit, useActionData } from "@remix-run/react";
+import { useLoaderData, useNavigate, useLocation, useSubmit, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { ChevronDownIcon, ChevronUpIcon, EditIcon, PlusIcon } from "@shopify/polaris-icons";
 
@@ -21,7 +21,12 @@ const {
   Thumbnail,
   Badge,
   EmptyState,
-  Spinner
+  Spinner,
+  Banner,
+  Modal,
+  LegacyStack,
+  TextField,
+  Select,
 } = Polaris;
 
 export const loader = async ({ request }) => {
@@ -231,11 +236,13 @@ export default function Main() {
   const navigate = useNavigate();
   const location = useLocation();
   const submit = useSubmit();
+  const navigation = useNavigation();
   
   // State to track which accordions are open
   const [openAccordions, setOpenAccordions] = useState({});
   const [lastVisited, setLastVisited] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
+  const [loadingSubcat, setLoadingSubcat] = useState(null);
   
   // Add state for modals and form fields
   const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false);
@@ -274,7 +281,12 @@ export default function Main() {
       const newUrl = location.pathname;
       window.history.replaceState({}, '', newUrl);
     }
-  }, [location, submit]);
+    
+    if (navigation.state === 'idle') {
+      setLoadingSubcat(null);
+      setEditingItem(null);
+    }
+  }, [location, submit, navigation.state]);
   
   // Toggle accordion open/close
   const toggleAccordion = useCallback((id) => {
@@ -301,6 +313,7 @@ export default function Main() {
   
   // Handle adding subcategories
   const handleAddSubcategories = useCallback((parentId) => {
+    setLoadingSubcat(parentId);
     const collectionId = parentId.replace('gid://shopify/Collection/', '');
     navigate(`/app/collections/edit/${collectionId}?returnTo=/app/main&focusSubcategories=true`);
   }, [navigate]);
@@ -318,6 +331,7 @@ export default function Main() {
               icon={PlusIcon} 
               onClick={() => handleAddSubcategories(parentId)}
               variant="primary"
+              loading={loadingSubcat === parentId}
             >
               Create Subcategory
             </Button>
@@ -363,6 +377,7 @@ export default function Main() {
               icon={PlusIcon} 
               onClick={() => handleAddSubcategories(parentId)}
               variant="primary"
+              loading={loadingSubcat === parentId}
             >
               Add More Subcategories
             </Button>
@@ -376,7 +391,7 @@ export default function Main() {
   useEffect(() => {
     if (actionData?.message) {
       setBanner(
-        <Polaris.Banner
+        <Banner
           status={actionData.success ? "success" : "critical"}
           title={actionData.message}
           onDismiss={() => setBanner(null)}
@@ -414,7 +429,7 @@ export default function Main() {
     >
       {banner}
       {/* Create Collection Modal */}
-      <Polaris.Modal
+      <Modal
         open={isCreateCollectionOpen}
         onClose={() => setIsCreateCollectionOpen(false)}
         title="Create New Collection"
@@ -443,23 +458,23 @@ export default function Main() {
           }
         ]}
       >
-        <Polaris.Modal.Section>
-          <Polaris.LegacyStack vertical>
-            <Polaris.TextField
+        <Modal.Section>
+          <LegacyStack vertical>
+            <TextField
               label="Title"
               value={newCollectionTitle}
               onChange={setNewCollectionTitle}
               autoComplete="off"
               requiredIndicator
             />
-            <Polaris.TextField
+            <TextField
               label="Description"
               value={newCollectionDescription}
               onChange={setNewCollectionDescription}
               autoComplete="off"
               multiline={4}
             />
-            <Polaris.TextField
+            <TextField
               label="Image URL"
               value={newCollectionImage}
               onChange={setNewCollectionImage}
@@ -467,11 +482,11 @@ export default function Main() {
               placeholder="https://example.com/your-image.jpg"
               helpText="Enter a valid image URL (JPG, PNG, GIF)"
             />
-          </Polaris.LegacyStack>
-        </Polaris.Modal.Section>
-      </Polaris.Modal>
+          </LegacyStack>
+        </Modal.Section>
+      </Modal>
       {/* Create Subcategory Modal */}
-      <Polaris.Modal
+      <Modal
         open={isCreateSubcatOpen}
         onClose={() => setIsCreateSubcatOpen(false)}
         title="Create Subcategory"
@@ -502,23 +517,23 @@ export default function Main() {
           }
         ]}
       >
-        <Polaris.Modal.Section>
-          <Polaris.LegacyStack vertical>
-            <Polaris.TextField
+        <Modal.Section>
+          <LegacyStack vertical>
+            <TextField
               label="Title"
               value={subcatTitle}
               onChange={setSubcatTitle}
               autoComplete="off"
               requiredIndicator
             />
-            <Polaris.TextField
+            <TextField
               label="Description"
               value={subcatDescription}
               onChange={setSubcatDescription}
               autoComplete="off"
               multiline={4}
             />
-            <Polaris.TextField
+            <TextField
               label="Image URL"
               value={subcatImage}
               onChange={setSubcatImage}
@@ -526,7 +541,7 @@ export default function Main() {
               placeholder="https://example.com/your-image.jpg"
               helpText="Enter a valid image URL (JPG, PNG, GIF)"
             />
-            <Polaris.Select
+            <Select
               label="Parent Collection"
               options={collections.map(c => ({ label: c.title, value: c.id }))}
               value={subcatParent}
@@ -534,9 +549,9 @@ export default function Main() {
               placeholder="Select parent collection"
               requiredIndicator
             />
-          </Polaris.LegacyStack>
-        </Polaris.Modal.Section>
-      </Polaris.Modal>
+          </LegacyStack>
+        </Modal.Section>
+      </Modal>
       <Layout>
         <Layout.Section>
           <Card>

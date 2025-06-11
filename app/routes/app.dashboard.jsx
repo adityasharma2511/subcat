@@ -44,6 +44,9 @@ export const loader = async ({ request }) => {
                 altText
               }
               updatedAt
+            productsCount {
+                count
+               }
             }
           }
         }
@@ -283,7 +286,7 @@ export default function Dashboard() {
                   <ResourceList
                     items={collections}
                     renderItem={(collection) => {
-                      const { id, title, handle, image, updatedAt } = collection;
+                      const { id, title, handle, image, updatedAt, productsCount } = collection;
                       const media = (
                         <Thumbnail
                           source={image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
@@ -319,7 +322,7 @@ export default function Dashboard() {
                             {title}
                           </Text>
                           <div style={{ margin: "4px 0" }}>
-                            <Badge>count will be here products</Badge>
+                            <Badge>{`${productsCount.count} products`}</Badge>
                           </div>
                           <div style={{ fontSize: "12px", color: "#637381" }}>
                             Last updated: {new Date(updatedAt).toLocaleDateString()}

@@ -5,7 +5,15 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteError,
+  useNavigation,
 } from "@remix-run/react";
+import { useEffect } from "react";
+import NProgress from "nprogress";
+import nProgressStyles from "./nprogress.css?url";
+
+export const links = () => [
+  { rel: "stylesheet", href: nProgressStyles },
+];
 
 export function ErrorBoundary() {
   const error = useRouteError();
@@ -29,6 +37,16 @@ export function ErrorBoundary() {
 }
 
 export default function App() {
+  const navigation = useNavigation();
+
+  useEffect(() => {
+    if (navigation.state === "loading" || navigation.state === "submitting") {
+      NProgress.start();
+    } else {
+      NProgress.done();
+    }
+  }, [navigation.state]);
+
   return (
     <html lang="en">
       <head>
