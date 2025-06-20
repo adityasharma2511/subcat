@@ -19,7 +19,10 @@ import {
   InlineStack,
   Filters,
   ButtonGroup,
-  Tag
+  Tag,
+  Badge,
+  Tooltip,
+  Divider
 } from '@shopify/polaris';
 import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
@@ -373,6 +376,46 @@ export default function Products() {
     }
   }, [handleSearchSubmit]);
   
+  const handleClearAll = useCallback(() => {
+    setSearchValue("");
+    setCurrentSortKey("TITLE");
+    setIsReversed(false);
+    const params = new URLSearchParams();
+    submit(params);
+  }, [submit]);
+
+  const sortOptions = [
+    {label: 'Title', value: 'TITLE'},
+    {label: 'Vendor', value: 'VENDOR'},
+    {label: 'Product type', value: 'PRODUCT_TYPE'},
+    {label: 'Created', value: 'CREATED_AT'},
+    {label: 'Updated', value: 'UPDATED_AT'},
+    {label: 'Inventory', value: 'INVENTORY_TOTAL'},
+    {label: 'Price', value: 'PRICE'}
+  ];
+  
+  const filters = [
+    {
+      key: 'sort',
+      label: 'Sort by',
+      filter: (
+        <InlineStack gap="200" blockAlign="center">
+          <Select
+            label="Sort by"
+            labelHidden
+            options={sortOptions}
+            value={currentSortKey}
+            onChange={handleSortChange}
+          />
+          <Button onClick={handleReverseToggle} pressed={isReversed}>
+            {isReversed ? "Descending" : "Ascending"}
+          </Button>
+        </InlineStack>
+      ),
+      shortcut: true,
+    },
+  ];
+
   if (error) {
     return (
       <Page title="Products">
@@ -404,139 +447,108 @@ export default function Products() {
           <Layout.Section>
             <Card>
               <BlockStack gap="500">
-                <BlockStack gap="200">
-                  <InlineStack gap="200" align="start" blockAlign="center">
-                    <div style={{ flexGrow: 1 }}>
-                      <TextField
-                        label="Search products"
-                        value={searchValue}
-                        onChange={handleSearch}
-                        autoComplete="off"
-                        placeholder="Search by title, vendor, product type..."
-                        onKeyPress={handleKeyPress}
-                        labelHidden
-                      />
-                    </div>
-                    <Button onClick={handleSearchSubmit} disabled={isLoading}>
-                      Search
-                    </Button>
-                  </InlineStack>
-                  
-                  <InlineStack wrap={false} align="start" gap="200">
-                    <Select
-                      label="Sort by"
-                      labelInline
-                      options={[
-                        {label: 'Title', value: 'TITLE'},
-                        {label: 'Vendor', value: 'VENDOR'},
-                        {label: 'Product type', value: 'PRODUCT_TYPE'},
-                        {label: 'Created', value: 'CREATED_AT'},
-                        {label: 'Updated', value: 'UPDATED_AT'},
-                        {label: 'Inventory', value: 'INVENTORY_TOTAL'},
-                        {label: 'Price', value: 'PRICE'}
-                      ]}
-                      value={currentSortKey}
-                      onChange={handleSortChange}
-                    />
-                    <Button 
-                      onClick={handleReverseToggle}
-                      pressed={isReversed}
-                    >
-                      {isReversed ? "Descending" : "Ascending"}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
+                <Form onSubmit={handleSearchSubmit}>
+                  <Filters
+                    queryValue={searchValue}
+                    queryPlaceholder="Search by title, vendor, product type..."
+                    onQueryChange={handleSearch}
+                    onQueryClear={() => handleSearch("")}
+                    onClearAll={handleClearAll}
+                    filters={filters}
+                  />
+                </Form>
                 
-                {isLoading ? (
-                  <div style={{ textAlign: "center", padding: "2rem" }}>
-                    <Spinner size="large" />
-                  </div>
-                ) : products.length === 0 ? (
-                  <EmptyState
-                    heading="No products found"
-                    image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                  >
-                    <p>Try changing your search or filter criteria.</p>
-                  </EmptyState>
-                ) : (
-                  <>
-                    <ResourceList
-                      items={products}
-                      renderItem={(product) => {
-                        const { id, title, vendor, productType, status, formattedPrice, featuredImage, tags } = product;
-                        const media = (
-                          <Thumbnail
-                            source={featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1.png"}
-                            alt={featuredImage?.altText || title}
-                          />
-                        );
-                        
-                        return (
-                          <ResourceList.Item
-                            id={id}
-                            media={media}
-                            accessibilityLabel={`View details for ${title}`}
-                            shortcutActions={[
-                              {
-                                content: 'Edit',
-                                accessibilityLabel: `Edit ${title}`,
-                                onClick: () => handleEditClick(product),
-                              },
-                              {
-                                content: 'View',
-                                accessibilityLabel: `View ${title}`,
-                                url: `/app/products/${id.split('/').pop()}`,
-                              },
-                            ]}
-                          >
-                            <BlockStack gap="100">
-                              <Text variant="bodyMd" fontWeight="bold" as="h3">
-                                {title}
-                              </Text>
-                              
-                              <InlineStack gap="300">
-                                <Text variant="bodySm" color="subdued">
-                                  {formattedPrice}
-                                </Text>
-                                {vendor && (
-                                  <Text variant="bodySm" color="subdued">
-                                    Vendor: {vendor}
-                                  </Text>
-                                )}
-                                {productType && (
-                                  <Text variant="bodySm" color="subdued">
-                                    Type: {productType}
-                                  </Text>
-                                )}
-                                <Text variant="bodySm" color="subdued">
-                                  Status: {status.toLowerCase()}
-                                </Text>
-                              </InlineStack>
-                              
-                              {tags && tags.length > 0 && (
-                                <div style={{ marginTop: '8px' }}>
-                                  {tags.slice(0, 3).map((tag) => (
-                                    <Tag key={tag}>{tag}</Tag>
-                                  ))}
-                                  {tags.length > 3 && (
-                                    <Tag>+{tags.length - 3} more</Tag>
-                                  )}
-                                </div>
-                              )}
-                            </BlockStack>
-                          </ResourceList.Item>
-                        );
-                      }}
-                    />
-                    
-                    <div style={{ marginTop: '20px' }}>
-                      <Pagination
-                        hasPrevious={pageInfo.hasPreviousPage}
-                        onPrevious={() => handlePaginationClick('prev', pageInfo.startCursor)}
-                        hasNext={pageInfo.hasNextPage}
-                        onNext={() => handlePaginationClick('next', pageInfo.endCursor)}
+                <ResourceList
+                  loading={isLoading}
+                  items={products}
+                  renderItem={(product) => {
+                    const { id, title, vendor, productType, status, formattedPrice, featuredImage, tags } = product;
+                    const statusTone = status === 'ACTIVE' ? 'success' : (status === 'DRAFT' ? 'attention' : 'subdued');
+                    const media = (
+                      <Thumbnail
+                        source={featuredImage?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1.png"}
+                        alt={featuredImage?.altText || title}
                       />
-                    </div>
+                    );
+                    
+                    return (
+                      <ResourceList.Item
+                        id={id}
+                        media={media}
+                        accessibilityLabel={`View details for ${title}`}
+                        shortcutActions={[
+                          {
+                            content: 'Edit',
+                            accessibilityLabel: `Edit ${title}`,
+                            onClick: () => handleEditClick(product),
+                          },
+                          {
+                            content: 'View',
+                            accessibilityLabel: `View ${title}`,
+                            url: `/app/products/${id.split('/').pop()}`,
+                          },
+                        ]}
+                      >
+                        <BlockStack gap="200">
+                          <Tooltip content={title} preferredPosition="above">
+                            <Text variant="bodyMd" fontWeight="bold" as="h3" truncate>
+                              {title}
+                            </Text>
+                          </Tooltip>
+
+                          <InlineStack gap="300" align="start" blockAlign="center">
+                            <Text variant="bodySm" color="subdued" as="span">
+                              {formattedPrice}
+                            </Text>
+                            {vendor && (
+                              <Text variant="bodySm" color="subdued" as="span">
+                                {vendor}
+                              </Text>
+                            )}
+                            {productType && (
+                              <Text variant="bodySm" color="subdued" as="span">
+                                {productType}
+                              </Text>
+                            )}
+                            <Badge tone={statusTone}>{status.toLowerCase()}</Badge>
+                          </InlineStack>
+
+                          {tags && tags.length > 0 && (
+                            <InlineStack gap="100" wrap>
+                              {tags.slice(0, 3).map((tag) => (
+                                <Tag key={tag}>{tag}</Tag>
+                              ))}
+                              {tags.length > 3 && (
+                                <Tag>+{tags.length - 3} more</Tag>
+                              )}
+                            </InlineStack>
+                          )}
+                        </BlockStack>
+                      </ResourceList.Item>
+                    );
+                  }}
+                />
+                
+                {!isLoading && products.length > 0 && (
+                  <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center' }}>
+                    <Pagination
+                      hasPrevious={pageInfo?.hasPreviousPage}
+                      onPrevious={() => handlePaginationClick('prev', pageInfo?.startCursor)}
+                      hasNext={pageInfo?.hasNextPage}
+                      onNext={() => handlePaginationClick('next', pageInfo?.endCursor)}
+                    />
+                  </div>
+                )}
+                
+                {!isLoading && products.length === 0 && (
+                  <>
+                    <Divider />
+                    <EmptyState
+                      heading="No products found"
+                      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                    >
+                      <p>Try changing your search or filter criteria.</p>
+                    </EmptyState>
                   </>
                 )}
               </BlockStack>

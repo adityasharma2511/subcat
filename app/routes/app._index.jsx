@@ -1,18 +1,15 @@
-import * as Polaris from '@shopify/polaris';
 import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate, useLocation, useSubmit, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { ChevronDownIcon, ChevronUpIcon, EditIcon, PlusIcon } from "@shopify/polaris-icons";
-
-const {
+import {
   Page,
   Layout,
   Card,
   Text,
   ResourceList,
   ResourceItem,
-  Icon,
   Button,
   InlineStack,
   BlockStack,
@@ -21,13 +18,17 @@ const {
   Thumbnail,
   Badge,
   EmptyState,
+  Collapsible,
+  Form,
+  FormLayout,
   Spinner,
   Banner,
   Modal,
-  LegacyStack,
   TextField,
   Select,
-} = Polaris;
+  List,
+} from "@shopify/polaris";
+import CollectionImageUpload from '../components/CollectionImageUpload';
 
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
@@ -37,7 +38,7 @@ export const loader = async ({ request }) => {
     const collectionsResponse = await admin.graphql(
       `#graphql
       query GetCollectionsWithSubcategories {
-        collections(first: 100) {
+        collections(first: 100, query: "parent_collection_id:null") {
           edges {
             node {
               id
@@ -64,12 +65,18 @@ export const loader = async ({ request }) => {
                             image {
                               url
                             }
+                            productsCount {
+                              count
+                            }
                           }
                         }
                       }
                     }
                   }
                 }
+              }
+              productsCount {
+                count
               }
             }
           }
@@ -97,7 +104,7 @@ export const loader = async ({ request }) => {
       return {
         ...collection,
         subcategories,
-        hasSubcategories: subcategories.length > 0
+        subcategoriesCount: subcategories.length,
       };
     });
     
@@ -148,7 +155,7 @@ export const action = async ({ request }) => {
     if (responseJson.data?.collectionCreate?.userErrors?.length > 0) {
       return json({
         success: false,
-        message: "Failed to create collection: " + responseJson.data.collectionCreate.userErrors.map(e => e.message).join(", ")
+        errors: responseJson.data.collectionCreate.userErrors
       });
     }
     return json({ success: true, message: "Collection created successfully" });
@@ -181,7 +188,7 @@ export const action = async ({ request }) => {
     if (responseJson.data?.collectionCreate?.userErrors?.length > 0) {
       return json({
         success: false,
-        message: "Failed to create subcategory: " + responseJson.data.collectionCreate.userErrors.map(e => e.message).join(", ")
+        errors: responseJson.data.collectionCreate.userErrors
       });
     }
     const newSubcat = responseJson.data.collectionCreate.collection;
@@ -238,13 +245,7 @@ export default function Index() {
   const submit = useSubmit();
   const navigation = useNavigation();
   
-  // State to track which accordions are open
   const [openAccordions, setOpenAccordions] = useState({});
-  const [lastVisited, setLastVisited] = useState(null);
-  const [editingItem, setEditingItem] = useState(null);
-  const [loadingSubcat, setLoadingSubcat] = useState(null);
-  
-  // Add state for modals and form fields
   const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false);
   const [isCreateSubcatOpen, setIsCreateSubcatOpen] = useState(false);
   const [newCollectionTitle, setNewCollectionTitle] = useState("");
@@ -254,149 +255,80 @@ export default function Index() {
   const [subcatDescription, setSubcatDescription] = useState("");
   const [subcatImage, setSubcatImage] = useState("");
   const [subcatParent, setSubcatParent] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [banner, setBanner] = useState(null);
+  const [isCollectionImageProcessing, setIsCollectionImageProcessing] = useState(false);
+  const [isSubcatImageProcessing, setIsSubcatImageProcessing] = useState(false);
   
-  // Check for any collection ID in the URL search params (used for returning to this page)
+  // When returning from an edit page, open the accordion of the collection that was edited.
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search);
     const fromCollectionId = searchParams.get('fromCollectionId');
-    const needsRefresh = searchParams.get('refresh') === 'true';
-    
     if (fromCollectionId) {
-      // Open the accordion for this collection ID
-      setOpenAccordions(prev => ({
-        ...prev,
-        [`gid://shopify/Collection/${fromCollectionId}`]: true
-      }));
-      
-      // If refresh flag is present, force a data reload
-      if (needsRefresh) {
-        const formData = new FormData();
-        formData.append("action", "refresh_data");
-        submit(formData, { method: "post" });
-      }
-      
-      // Clean up URL without reloading the page
+      setOpenAccordions(prev => ({ ...prev, [fromCollectionId]: true }));
+      // Clean up URL
       const newUrl = location.pathname;
       window.history.replaceState({}, '', newUrl);
     }
-    
-    if (navigation.state === 'idle') {
-      setLoadingSubcat(null);
-      setEditingItem(null);
-    }
-  }, [location, submit, navigation.state]);
+  }, [location.search]);
   
   // Toggle accordion open/close
   const toggleAccordion = useCallback((id) => {
-    setOpenAccordions(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+    setOpenAccordions(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
   
-  // Handle edit button click with return URL
-  const handleEdit = useCallback((id) => {
-    // Set the editing state immediately for visual feedback
-    setEditingItem(id);
-    
-    // Extract collection ID from the Shopify ID format
-    const collectionId = id.replace('gid://shopify/Collection/', '');
-    
-    // Save the ID before navigation for reference when returning
-    setLastVisited(collectionId);
-    
-    // Navigate with return route
-    navigate(`/app/collections/edit/${collectionId}?returnTo=/app`);
-  }, [navigate]);
-  
-  // Handle adding subcategories
-  const handleAddSubcategories = useCallback((parentId) => {
-    setLoadingSubcat(parentId);
-    const collectionId = parentId.replace('gid://shopify/Collection/', '');
-    navigate(`/app/collections/edit/${collectionId}?returnTo=/app&focusSubcategories=true`);
-  }, [navigate]);
-  
-  // Render subcategories list
-  const renderSubcategories = (parentCollection) => {
-    const { subcategories, id: parentId } = parentCollection;
-    
-    if (!subcategories || subcategories.length === 0) {
-      return (
-        <Box padding="300">
-          <InlineStack align="space-between">
-            <Text tone="subdued">No subcategories</Text>
-            <Button 
-              icon={PlusIcon} 
-              onClick={() => handleAddSubcategories(parentId)}
-              variant="primary"
-              loading={loadingSubcat === parentId}
-            >
-              Create Subcategory
-            </Button>
-          </InlineStack>
-        </Box>
-      );
+  const handleEdit = useCallback((collectionId, parentId = null) => {
+    const editId = collectionId.replace('gid://shopify/Collection/', '');
+    let returnTo = `/app`;
+    if (parentId) {
+      returnTo = `/app?fromCollectionId=${parentId}`;
     }
-    
-    return (
-      <Box padding="300">
-        <BlockStack gap="300">
-          {subcategories.map(subcategory => (
-            <Box
-              key={subcategory.id}
-              background="bg-surface-secondary"
-              borderRadius="100" 
-              padding="300"
-            >
-              <InlineStack gap="400" align="space-between">
-                <InlineStack gap="300">
-                  <Thumbnail
-                    source={subcategory.image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
-                    alt={subcategory.title}
-                    size="small"
-                  />
-                  <Text variant="bodyMd" fontWeight="medium">{subcategory.title}</Text>
-                </InlineStack>
-                <Button 
-                  icon={EditIcon} 
-                  onClick={() => handleEdit(subcategory.id)}
-                  variant="tertiary"
-                  loading={editingItem === subcategory.id}
-                  disabled={editingItem === subcategory.id}
-                >
-                  Edit
-                </Button>
-              </InlineStack>
-            </Box>
-          ))}
-          
-          <Box padding="300">
-            <Button 
-              icon={PlusIcon} 
-              onClick={() => handleAddSubcategories(parentId)}
-              variant="primary"
-              loading={loadingSubcat === parentId}
-            >
-              Add More Subcategories
-            </Button>
-          </Box>
-        </BlockStack>
-      </Box>
-    );
+    navigate(`/app/collections/edit/${editId}?returnTo=${encodeURIComponent(returnTo)}`);
+  }, [navigate]);
+  
+  const handleAddSubcategory = (parentId) => {
+    setSubcatParent(parentId);
+    setIsCreateSubcatOpen(true);
   };
   
-  // Show banner if actionData has a message
+  const handleCreateCollection = () => {
+    const formData = new FormData();
+    formData.append("action", "create_collection");
+    formData.append("title", newCollectionTitle);
+    formData.append("description", newCollectionDescription);
+    formData.append("imageUrl", newCollectionImage);
+    submit(formData, { method: "post" });
+    setIsCreateCollectionOpen(false);
+    setNewCollectionTitle("");
+    setNewCollectionDescription("");
+    setNewCollectionImage("");
+  };
+
+  const handleCreateSubcategory = () => {
+    const formData = new FormData();
+    formData.append("action", "create_subcategory");
+    formData.append("title", subcatTitle);
+    formData.append("description", subcatDescription);
+    formData.append("imageUrl", subcatImage);
+    formData.append("parentId", subcatParent);
+    submit(formData, { method: "post" });
+    setIsCreateSubcatOpen(false);
+    setSubcatTitle("");
+    setSubcatDescription("");
+    setSubcatImage("");
+    setSubcatParent("");
+  };
+  
   useEffect(() => {
-    if (actionData?.message) {
-      setBanner(
-        <Banner
-          status={actionData.success ? "success" : "critical"}
-          title={actionData.message}
-          onDismiss={() => setBanner(null)}
-        />
-      );
+    if (actionData) {
+      if(actionData.success) {
+        setBanner(<Banner status="success" title={actionData.message} onDismiss={() => setBanner(null)} />);
+      } else if(actionData.errors) {
+        setBanner(<Banner status="critical" title="There was an error" onDismiss={() => setBanner(null)}>
+          <List type="bullet">
+            {actionData.errors.map((err, idx) => <List.Item key={idx}>{err.message}</List.Item>)}
+          </List>
+        </Banner>);
+      }
     }
   }, [actionData]);
   
@@ -413,205 +345,255 @@ export default function Index() {
     );
   }
   
+  const isLoading = navigation.state === "loading" || navigation.state === "submitting";
+
+  const renderSubcategories = (parentCollection) => {
+    const { subcategories, id: parentId } = parentCollection;
+    
+    if (!subcategories || subcategories.length === 0) {
+      return (
+        <Box paddingBlockStart="200" paddingBlockEnd="200" paddingInlineStart="500" paddingInlineEnd="500">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="span" variant="bodyMd" tone="subdued">No subcategories yet.</Text>
+            <Button
+              icon={PlusIcon}
+              onClick={() => handleAddSubcategory(parentId)}
+              size="slim"
+            >
+              Add Subcategory
+            </Button>
+          </InlineStack>
+        </Box>
+      );
+    }
+    
+    return (
+      <ResourceList
+        resourceName={{ singular: 'subcategory', plural: 'subcategories' }}
+        items={subcategories}
+        renderItem={(item) => {
+          const { id, title, image, productsCount } = item;
+          const media = (
+            <Thumbnail
+              source={image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
+              alt={title}
+              size="small"
+            />
+          );
+
+          return (
+            <ResourceItem
+              id={id}
+              media={media}
+              accessibilityLabel={`View details for ${title}`}
+              onClick={() => handleEdit(id, parentId)}
+            >
+              <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                <Text variant="bodyMd" fontWeight="bold" as="h3">{title}</Text>
+                <Badge tone="info">{productsCount.count} products</Badge>
+              </InlineStack>
+            </ResourceItem>
+          );
+        }}
+      />
+    );
+  };
+  
+  const emptyStateMarkup = (
+    <EmptyState
+      heading="Create collections to group your products"
+      action={{
+        content: "Create Collection",
+        onAction: () => setIsCreateCollectionOpen(true),
+      }}
+      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+    >
+      <p>Group products into categories and subcategories to make them easier for customers to find.</p>
+    </EmptyState>
+  );
+
   return (
     <Page
       title="Collections Manager"
       primaryAction={{
         content: "Create Collection",
-        onAction: () => setIsCreateCollectionOpen(true)
+        onAction: () => setIsCreateCollectionOpen(true),
+        disabled: isLoading,
       }}
       secondaryActions={[
         {
           content: "Create Subcategory",
-          onAction: () => setIsCreateSubcatOpen(true)
+          onAction: () => setIsCreateSubcatOpen(true),
+          disabled: isLoading,
         }
       ]}
     >
       {banner}
-      {/* Create Collection Modal */}
       <Modal
         open={isCreateCollectionOpen}
         onClose={() => setIsCreateCollectionOpen(false)}
         title="Create New Collection"
         primaryAction={{
           content: "Create",
-          onAction: async () => {
-            setIsSubmitting(true);
-            const formData = new FormData();
-            formData.append("action", "create_collection");
-            formData.append("title", newCollectionTitle);
-            formData.append("description", newCollectionDescription);
-            formData.append("imageUrl", newCollectionImage);
-            await submit(formData, { method: "post" });
-            setIsSubmitting(false);
-            setIsCreateCollectionOpen(false);
-            setNewCollectionTitle("");
-            setNewCollectionDescription("");
-            setNewCollectionImage("");
-          },
-          loading: isSubmitting
+          onAction: handleCreateCollection,
+          loading: isLoading,
+          disabled: isCollectionImageProcessing || !newCollectionTitle || !newCollectionImage
         }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: () => setIsCreateCollectionOpen(false)
-          }
-        ]}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsCreateCollectionOpen(false) }]}
       >
         <Modal.Section>
-          <LegacyStack vertical>
-            <TextField
-              label="Title"
-              value={newCollectionTitle}
-              onChange={setNewCollectionTitle}
-              autoComplete="off"
-              requiredIndicator
-            />
-            <TextField
-              label="Description"
-              value={newCollectionDescription}
-              onChange={setNewCollectionDescription}
-              autoComplete="off"
-              multiline={4}
-            />
-            <TextField
-              label="Image URL"
-              value={newCollectionImage}
-              onChange={setNewCollectionImage}
-              autoComplete="off"
-              placeholder="https://example.com/your-image.jpg"
-              helpText="Enter a valid image URL (JPG, PNG, GIF)"
-            />
-          </LegacyStack>
+          <Form onSubmit={handleCreateCollection}>
+            <FormLayout>
+              <TextField
+                label="Title"
+                value={newCollectionTitle}
+                onChange={setNewCollectionTitle}
+                autoComplete="off"
+                requiredIndicator
+              />
+              <TextField
+                label="Description"
+                value={newCollectionDescription}
+                onChange={setNewCollectionDescription}
+                autoComplete="off"
+                multiline={4}
+              />
+              <CollectionImageUpload
+                onImageUpload={setNewCollectionImage}
+                initialImageUrl={newCollectionImage}
+                onProcessingChange={setIsCollectionImageProcessing}
+              />
+            </FormLayout>
+          </Form>
         </Modal.Section>
       </Modal>
-      {/* Create Subcategory Modal */}
+
       <Modal
         open={isCreateSubcatOpen}
         onClose={() => setIsCreateSubcatOpen(false)}
         title="Create Subcategory"
         primaryAction={{
           content: "Create",
-          onAction: async () => {
-            setIsSubmitting(true);
-            const formData = new FormData();
-            formData.append("action", "create_subcategory");
-            formData.append("title", subcatTitle);
-            formData.append("description", subcatDescription);
-            formData.append("imageUrl", subcatImage);
-            formData.append("parentId", subcatParent);
-            await submit(formData, { method: "post" });
-            setIsSubmitting(false);
-            setIsCreateSubcatOpen(false);
-            setSubcatTitle("");
-            setSubcatDescription("");
-            setSubcatImage("");
-            setSubcatParent("");
-          },
-          loading: isSubmitting
+          onAction: handleCreateSubcategory,
+          loading: isLoading,
+          disabled: isSubcatImageProcessing || !subcatTitle || !subcatImage || !subcatParent
         }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: () => setIsCreateSubcatOpen(false)
-          }
-        ]}
+        secondaryActions={[{ content: "Cancel", onAction: () => setIsCreateSubcatOpen(false) }]}
       >
         <Modal.Section>
-          <LegacyStack vertical>
-            <TextField
-              label="Title"
-              value={subcatTitle}
-              onChange={setSubcatTitle}
-              autoComplete="off"
-              requiredIndicator
-            />
-            <TextField
-              label="Description"
-              value={subcatDescription}
-              onChange={setSubcatDescription}
-              autoComplete="off"
-              multiline={4}
-            />
-            <TextField
-              label="Image URL"
-              value={subcatImage}
-              onChange={setSubcatImage}
-              autoComplete="off"
-              placeholder="https://example.com/your-image.jpg"
-              helpText="Enter a valid image URL (JPG, PNG, GIF)"
-            />
-            <Select
-              label="Parent Collection"
-              options={collections.map(c => ({ label: c.title, value: c.id }))}
-              value={subcatParent}
-              onChange={setSubcatParent}
-              placeholder="Select parent collection"
-              requiredIndicator
-            />
-          </LegacyStack>
+          <Form onSubmit={handleCreateSubcategory}>
+            <FormLayout>
+              <Select
+                label="Parent Collection"
+                options={collections.map(c => ({ label: c.title, value: c.id }))}
+                value={subcatParent}
+                onChange={setSubcatParent}
+                placeholder="Select parent collection"
+                requiredIndicator
+              />
+              <TextField
+                label="Title"
+                value={subcatTitle}
+                onChange={setSubcatTitle}
+                autoComplete="off"
+                requiredIndicator
+              />
+              <TextField
+                label="Description"
+                value={subcatDescription}
+                onChange={setSubcatDescription}
+                autoComplete="off"
+                multiline={4}
+              />
+              <CollectionImageUpload
+                onImageUpload={setSubcatImage}
+                initialImageUrl={subcatImage}
+                onProcessingChange={setIsSubcatImageProcessing}
+              />
+            </FormLayout>
+          </Form>
         </Modal.Section>
       </Modal>
+
       <Layout>
         <Layout.Section>
-          <Card>
+          {isLoading && !collections.length ? (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              <Spinner accessibilityLabel="Loading collections" size="large" />
+            </div>
+          ) : (
             <BlockStack gap="500">
               {collections.length === 0 ? (
-                <EmptyState
-                  heading="No collections found"
-                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                >
-                  <p>Create your first collection to get started.</p>
-                </EmptyState>
+                emptyStateMarkup
               ) : (
-                collections.map((collection, index) => (
-                  <div key={collection.id}>
-                    {index > 0 && <Divider />}
-                    <Box padding="300">
-                      <BlockStack gap="300">
-                        <InlineStack gap="400" align="space-between">
-                          <InlineStack gap="300" blockAlign="center">
-                            <Button
-                              icon={openAccordions[collection.id] ? ChevronUpIcon : ChevronDownIcon}
-                              onClick={() => toggleAccordion(collection.id)}
-                              variant="plain"
-                              accessibilityLabel={openAccordions[collection.id] ? "Collapse" : "Expand"}
-                            />
-                            <Thumbnail
-                              source={collection.image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
-                              alt={collection.title}
-                              size="small"
-                            />
-                            <div>
-                              <Text variant="headingMd" fontWeight="bold">{collection.title}</Text>
-                              {collection.hasSubcategories && (
-                                <Badge tone="info">Has Subcategories</Badge>
-                              )}
-                            </div>
-                          </InlineStack>
+                collections.map((collection) => (
+                  <Card key={collection.id}>
+                    <Box padding="400">
+                      <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                        <InlineStack gap="400" blockAlign="center">
+                          <Thumbnail
+                            source={collection.image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
+                            alt={collection.title}
+                          />
+                          <BlockStack gap="100">
+                            <Text variant="headingMd" as="h2">{collection.title}</Text>
+                            <Text variant="bodyMd" tone="subdued">
+                              {collection.productsCount.count} products
+                            </Text>
+                          </BlockStack>
+                        </InlineStack>
+                        <InlineStack gap="200" align="end">
+                           <Button
+                            onClick={() => handleAddSubcategory(collection.id)}
+                            icon={PlusIcon}
+                          >
+                            Add Subcategory
+                          </Button>
                           <Button 
                             icon={EditIcon} 
                             onClick={() => handleEdit(collection.id)}
-                            loading={editingItem === collection.id}
-                            disabled={editingItem === collection.id}
+                            variant="tertiary"
                           >
                             Edit
                           </Button>
                         </InlineStack>
-                        
-                        {openAccordions[collection.id] && (
-                          <>
-                            <Divider />
-                            {renderSubcategories(collection)}
-                          </>
-                        )}
-                      </BlockStack>
+                      </InlineStack>
                     </Box>
-                  </div>
+
+                    <Divider />
+                    
+                    <Box
+                      as="div"
+                      style={{
+                        cursor: 'pointer',
+                        padding: 'var(--p-space-300) var(--p-space-400)',
+                      }}
+                      onClick={() => toggleAccordion(collection.id)}
+                    >
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text variant="bodyMd" fontWeight="bold">
+                          {collection.subcategoriesCount} Subcategories
+                        </Text>
+                        <Button
+                          plain
+                          icon={openAccordions[collection.id] ? ChevronUpIcon : ChevronDownIcon}
+                          accessibilityLabel={openAccordions[collection.id] ? "Collapse" : "Expand"}
+                        />
+                      </InlineStack>
+                    </Box>
+
+                    <Collapsible
+                      open={openAccordions[collection.id]}
+                      id={`collapsible-${collection.id}`}
+                      transition={{ duration: '300ms', timingFunction: 'ease-in-out' }}
+                    >
+                      {renderSubcategories(collection)}
+                    </Collapsible>
+                  </Card>
                 ))
               )}
             </BlockStack>
-          </Card>
+          )}
         </Layout.Section>
       </Layout>
     </Page>

@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate, useLocation, useSubmit, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { ChevronDownIcon, ChevronUpIcon, EditIcon, PlusIcon } from "@shopify/polaris-icons";
+import CollectionImageUpload from '../components/CollectionImageUpload';
 
 const {
   Page,
@@ -256,6 +257,8 @@ export default function Main() {
   const [subcatParent, setSubcatParent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [banner, setBanner] = useState(null);
+  const [isCollectionImageProcessing, setIsCollectionImageProcessing] = useState(false);
+  const [isSubcatImageProcessing, setIsSubcatImageProcessing] = useState(false);
   
   // Check for any collection ID in the URL search params (used for returning to this page)
   useEffect(() => {
@@ -449,7 +452,8 @@ export default function Main() {
             setNewCollectionDescription("");
             setNewCollectionImage("");
           },
-          loading: isSubmitting
+          loading: isSubmitting,
+          disabled: isCollectionImageProcessing || !newCollectionTitle || !newCollectionImage
         }}
         secondaryActions={[
           {
@@ -474,13 +478,10 @@ export default function Main() {
               autoComplete="off"
               multiline={4}
             />
-            <TextField
-              label="Image URL"
-              value={newCollectionImage}
-              onChange={setNewCollectionImage}
-              autoComplete="off"
-              placeholder="https://example.com/your-image.jpg"
-              helpText="Enter a valid image URL (JPG, PNG, GIF)"
+            <CollectionImageUpload
+              onImageUpload={setNewCollectionImage}
+              initialImageUrl={newCollectionImage}
+              onProcessingChange={setIsCollectionImageProcessing}
             />
           </LegacyStack>
         </Modal.Section>
@@ -489,7 +490,7 @@ export default function Main() {
       <Modal
         open={isCreateSubcatOpen}
         onClose={() => setIsCreateSubcatOpen(false)}
-        title="Create Subcategory"
+        title="Create Subcategorys"
         primaryAction={{
           content: "Create",
           onAction: async () => {
@@ -508,7 +509,8 @@ export default function Main() {
             setSubcatImage("");
             setSubcatParent("");
           },
-          loading: isSubmitting
+          loading: isSubmitting,
+          disabled: isSubcatImageProcessing || !subcatTitle || !subcatImage || !subcatParent
         }}
         secondaryActions={[
           {
@@ -533,13 +535,10 @@ export default function Main() {
               autoComplete="off"
               multiline={4}
             />
-            <TextField
-              label="Image URL"
-              value={subcatImage}
-              onChange={setSubcatImage}
-              autoComplete="off"
-              placeholder="https://example.com/your-image.jpg"
-              helpText="Enter a valid image URL (JPG, PNG, GIF)"
+            <CollectionImageUpload
+              onImageUpload={setSubcatImage}
+              initialImageUrl={subcatImage}
+              onProcessingChange={setIsSubcatImageProcessing}
             />
             <Select
               label="Parent Collection"

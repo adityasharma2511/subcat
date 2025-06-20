@@ -35,6 +35,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit, useNavigate, useNavigation, useParams, Link, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { PlusIcon, MinusIcon, SearchIcon, XIcon, FilterIcon } from "@shopify/polaris-icons";
+import CollectionImageUpload from '../components/CollectionImageUpload';
 
 export const loader = async ({ request, params }) => {
   const { admin } = await authenticate.admin(request);
@@ -307,8 +308,7 @@ export const action = async ({ request, params }) => {
         // Make collection available in online store channel
         publications: [
           {
-            publicationId: "gid://shopify/Publication/55650394178",
-            channel: "ONLINE_STORE"
+            publicationId: "gid://shopify/Publication/55650394178"
           }
         ]
       };
@@ -1248,6 +1248,7 @@ export default function EditCollection() {
   const [imageUrl, setImageUrl] = useState(collection?.image?.url || "");
   const [parentCollectionId, setParentCollectionId] = useState("");
   const [collectionType, setCollectionType] = useState(isSmartCollection ? "smart" : "manual");
+  const [isImageProcessing, setIsImageProcessing] = useState(false);
   
   // State for subcategories management
   const [subcategoriesList, setSubcategoriesList] = useState(subcategories || []);
@@ -1575,30 +1576,27 @@ export default function EditCollection() {
     formData.append("title", title);
     formData.append("description", description);
     formData.append("collectionType", collectionType);
-    
     if (imageUrl) {
       formData.append("imageUrl", imageUrl);
     }
-    
     if (parentCollectionId) {
       formData.append("parentCollectionId", parentCollectionId);
     }
-    
     if (collectionType === "smart") {
       formData.append("rules", JSON.stringify(rules));
       formData.append("globalCondition", globalCondition);
     }
-    
     submit(formData, { method: "post" });
-    
+    // Refetch the collection after update to get the latest image
+    setTimeout(() => {
+      window.location.reload();
+    }, 1200);
     showToast('Collection successfully updated');
-    
     // If there's a returnTo path, navigate back after saving
     if (returnTo) {
-      // Add a slight delay to allow the toast to be visible
       setTimeout(() => {
         navigate(`${returnTo}?fromCollectionId=${collectionId}`);
-      }, 1000);
+      }, 1500);
     }
   };
 
@@ -1954,13 +1952,10 @@ export default function EditCollection() {
                     multiline={4}
                   />
                   
-                  <TextField
-                    label="Image URL"
-                    value={imageUrl}
-                    onChange={setImageUrl}
-                    autoComplete="off"
-                    placeholder="https://example.com/your-image.jpg"
-                    helpText="Enter a valid image URL (JPG, PNG, GIF)"
+                  <CollectionImageUpload
+                    onImageUpload={setImageUrl}
+                    initialImageUrl={imageUrl}
+                    onProcessingChange={setIsImageProcessing}
                   />
                   
                   <Select
@@ -2581,8 +2576,13 @@ export default function EditCollection() {
             <Button url={returnTo ? `${returnTo}?fromCollectionId=${collectionId}` : "/app/dashboard"}>
               Cancel
             </Button>
-            <Button primary onClick={handleUpdateCollection} loading={isLoading}>
-              Save Changes
+            <Button
+              primary
+              onClick={handleUpdateCollection}
+              loading={isLoading}
+              disabled={isImageProcessing || !title || !imageUrl}
+            >
+              Save
             </Button>
           </InlineStack>
         </BlockStack>

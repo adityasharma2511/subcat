@@ -3,7 +3,7 @@
 client_id = "b210868519badacaf28ab2774abf9846"
 name = "Try us - AR"
 handle = "try-us-ar"
-application_url = "https://mortgage-cheese-lauderdale-chart.trycloudflare.com"
+application_url = "https://moses-sense-alert-stevens.trycloudflare.com"
 embedded = true
 
 [build]
@@ -13,17 +13,17 @@ include_config_on_deploy = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products"
+scopes = "write_files,write_products"
 
 [auth]
 redirect_urls = [
-  "https://mortgage-cheese-lauderdale-chart.trycloudflare.com/auth/callback",
-  "https://mortgage-cheese-lauderdale-chart.trycloudflare.com/auth/shopify/callback",
-  "https://mortgage-cheese-lauderdale-chart.trycloudflare.com/api/auth/callback"
+  "https://moses-sense-alert-stevens.trycloudflare.com/auth/callback",
+  "https://moses-sense-alert-stevens.trycloudflare.com/auth/shopify/callback",
+  "https://moses-sense-alert-stevens.trycloudflare.com/api/auth/callback"
 ]
 
 [webhooks]
-api_version = "2024-07"
+api_version = "2024-10"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
@@ -34,7 +34,7 @@ api_version = "2024-07"
   uri = "/webhooks/app/uninstalled"
 
 [app_proxy]
-url = "https://mortgage-cheese-lauderdale-chart.trycloudflare.com/frontrequest"
+url = "https://moses-sense-alert-stevens.trycloudflare.com/frontrequest"
 subpath = "aditya"
 prefix = "apps"
 

@@ -23,9 +23,10 @@ import { useState } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit, useNavigation, useNavigate } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
+import CollectionImageUpload from '../components/CollectionImageUpload';
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   
   try {
     const response = await admin.graphql(
@@ -44,9 +45,9 @@ export const loader = async ({ request }) => {
                 altText
               }
               updatedAt
-            productsCount {
+              productsCount {
                 count
-               }
+              }
             }
           }
         }
@@ -56,13 +57,15 @@ export const loader = async ({ request }) => {
     const responseJson = await response.json();
     return json({
       collections: responseJson.data.collections.edges.map(edge => edge.node) || [],
-      error: null
+      error: null,
+      shop: session.shop
     });
   } catch (error) {
     console.error("Error fetching collections:", error);
     return json({
       collections: [],
-      error: "Failed to load collections. Please try again."
+      error: "Failed to load collections. Please try again.",
+      shop: session.shop
     });
   }
 };
@@ -191,7 +194,7 @@ export const action = async ({ request }) => {
 };
 
 export default function Dashboard() {
-  const { collections, error } = useLoaderData();
+  const { collections, error, shop } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -235,6 +238,11 @@ export default function Dashboard() {
     submit(data, { method: "post" });
     setShowDeleteModal(false);
     setSelectedCollection(null);
+  };
+
+  const handleImageUpload = (url) => {
+    console.log("Image URL:", url);
+    setImageUrl(url);
   };
 
   return (
@@ -341,7 +349,7 @@ export default function Dashboard() {
         <Modal
           open={isCreating}
           onClose={() => setIsCreating(false)}
-          title="Create New Collection"
+          title="Create Collection"
           primaryAction={{
             content: "Create",
             onAction: handleCreateCollection,
@@ -370,15 +378,14 @@ export default function Dashboard() {
                 autoComplete="off"
                 multiline={4}
               />
-              
-              <TextField
-                label="Image URL"
-                value={imageUrl}
-                onChange={setImageUrl}
-                autoComplete="off"
-                placeholder="https://example.com/your-image.jpg"
-                helpText="Enter a valid image URL (JPG, PNG, GIF)"
-              />
+              <BlockStack gap="200">
+                <Text variant="bodyMd" as="p">Collection Image</Text>
+                <CollectionImageUpload 
+                  onImageUpload={handleImageUpload}
+                  initialImageUrl={imageUrl}
+                  shop={shop}
+                />
+              </BlockStack>
             </LegacyStack>
           </Modal.Section>
         </Modal>
