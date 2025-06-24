@@ -37,6 +37,51 @@ import { authenticate } from "../shopify.server";
 import { PlusIcon, MinusIcon, SearchIcon, XIcon, FilterIcon } from "@shopify/polaris-icons";
 import CollectionImageUpload from '../components/CollectionImageUpload';
 
+// Add a helper to fetch all collections with pagination
+async function fetchAllCollections(admin, query, variables = {}) {
+  let allCollections = [];
+  let hasNextPage = true;
+  let after = null;
+  while (hasNextPage) {
+    const response = await admin.graphql(query, {
+      variables: { ...variables, first: 100, after }
+    });
+    const json = await response.json();
+    const edges = json.data.collections.edges;
+    allCollections.push(...edges.map(edge => edge.node));
+    hasNextPage = json.data.collections.pageInfo.hasNextPage;
+    after = json.data.collections.pageInfo.endCursor;
+  }
+  return allCollections;
+}
+
+// Add a helper to fetch all products in a collection with pagination
+async function fetchAllCollectionProducts(admin, collectionId) {
+  let allProducts = [];
+  let hasNextPage = true;
+  let after = null;
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+      query GetCollectionProducts($id: ID!, $first: Int!, $after: String) {
+        collection(id: $id) {
+          products(first: $first, after: $after) {
+            edges { node { id title handle featuredImage { url altText } status vendor productType tags createdAt priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } } } cursor }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { variables: { id: `gid://shopify/Collection/${collectionId}`, first: 100, after } }
+    );
+    const json = await response.json();
+    const edges = json.data.collection.products.edges;
+    allProducts.push(...edges.map(edge => edge.node));
+    hasNextPage = json.data.collection.products.pageInfo.hasNextPage;
+    after = json.data.collection.products.pageInfo.endCursor;
+  }
+  return allProducts;
+}
+
 export const loader = async ({ request, params }) => {
   const { admin } = await authenticate.admin(request);
   const { collectionId } = params;
@@ -44,6 +89,7 @@ export const loader = async ({ request, params }) => {
   // Check if this is a refetch request
   const url = new URL(request.url);
   const isRefetch = url.searchParams.get("_action") === "refetch";
+  const parentIdFromURL = url.searchParams.get("parentId");
   
   try {
     // Fetch collection details
@@ -106,78 +152,28 @@ export const loader = async ({ request, params }) => {
     const collection = collectionJson.data.collection;
 
     // Fetch all collections for parent selection
-    const collectionsResponse = await admin.graphql(
+    const collections = await fetchAllCollections(
+      admin,
       `#graphql
-      query GetCollections {
-        collections(first: 50) {
-          edges {
-            node {
-              id
-              title
-              handle
-              image {
-                url
-              }
-            }
-          }
-        }
-      }`
-    );
-
-    const collectionsJson = await collectionsResponse.json();
-    const collections = collectionsJson.data.collections.edges.map(edge => edge.node);
-
-    // Fetch products in the collection
-    const productsResponse = await admin.graphql(
-      `#graphql
-      query GetCollectionProducts($id: ID!, $first: Int!, $after: String) {
-        collection(id: $id) {
-          products(first: $first, after: $after) {
+        query GetAllCollections($first: Int!, $after: String) {
+          collections(first: $first, after: $after) {
             edges {
               node {
                 id
                 title
                 handle
-                featuredImage {
-                  url
-                  altText
-                }
-                status
-                vendor
-                productType
-                tags
-                createdAt
-                priceRangeV2 {
-                  minVariantPrice {
-                    amount
-                    currencyCode
-                  }
-                  maxVariantPrice {
-                    amount
-                    currencyCode
-                  }
-                }
+                image { url }
               }
-              cursor
             }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
+            pageInfo { hasNextPage endCursor }
           }
         }
-      }`,
-      {
-        variables: {
-          id: `gid://shopify/Collection/${collectionId}`,
-          first: 20,
-        },
-      }
+      `
     );
 
-    const productsJson = await productsResponse.json();
-    const products = productsJson.data.collection.products.edges.map(edge => edge.node);
-    const pageInfo = productsJson.data.collection.products.pageInfo;
+    // Fetch products in the collection
+    const products = await fetchAllCollectionProducts(admin, collectionId);
+    const pageInfo = { hasNextPage: false, endCursor: null };
 
     // Extract subcategories from metafields
     const subcategoriesMetafield = collection.metafields.edges.find(
@@ -197,6 +193,47 @@ export const loader = async ({ request, params }) => {
     console.log("Is disjunctive (OR condition):", collection.ruleSet?.appliedDisjunctively);
     console.log("Subcategories:", subcategories);
     
+    // Fetch Online Store publication ID
+    const publicationsResponse = await admin.graphql(
+      `#graphql
+      query GetPublications {
+        publications(first: 10) {
+          edges {
+            node {
+              id
+              name
+            }
+          }
+        }
+      }`
+    );
+    const publicationsJson = await publicationsResponse.json();
+    const onlineStorePublication = (publicationsJson.data.publications.edges || []).find(
+      edge => edge.node.name === "Online Store"
+    );
+    const onlineStorePublicationId = onlineStorePublication?.node?.id || null;
+    
+    // In loader, extract parent_collection metafield and normalize to GID format
+    const parentMetafield = collection.metafields.edges.find(
+      edge => edge.node.namespace === "custom" && edge.node.key === "parent_collection"
+    );
+    let parentCollectionId = parentIdFromURL;
+    if (parentMetafield && parentMetafield.node.value) {
+      // If already a GID, use as is. If just a number, convert to GID.
+      const val = parentMetafield.node.value;
+      if (val.startsWith("gid://shopify/Collection/")) {
+        parentCollectionId = val;
+      } else if (/^\d+$/.test(val)) {
+        parentCollectionId = `gid://shopify/Collection/${val}`;
+      } else {
+        parentCollectionId = val; // fallback, may still work
+      }
+    }
+    
+    // Debug log for parent collection
+    console.log("[DEBUG] parentCollectionId:", parentCollectionId);
+    console.log("[DEBUG] collections IDs:", collections.map(c => c.id));
+    
     return json({
       collection,
       collections,
@@ -205,6 +242,8 @@ export const loader = async ({ request, params }) => {
       isSmartCollection,
       subcategories,
       subcategoriesMetafieldId: subcategoriesMetafield?.node?.id || null,
+      parentCollectionId, // Pass to client
+      onlineStorePublicationId, // Pass to client
       error: null
     });
   } catch (error) {
@@ -217,6 +256,8 @@ export const loader = async ({ request, params }) => {
       isSmartCollection: false,
       subcategories: [],
       subcategoriesMetafieldId: null,
+      parentCollectionId: null,
+      onlineStorePublicationId: null,
       error: "Failed to load collection. Please try again."
     });
   }
@@ -273,7 +314,7 @@ export const action = async ({ request, params }) => {
         );
         
         const responseJson = await response.json();
-        const collections = responseJson.data.collections.edges.map(edge => edge.node);
+        const collections = (responseJson.data.collections?.edges || []).map(edge => edge.node);
         
         // Filter out the current collection
         const filteredCollections = collections.filter(c => 
@@ -299,18 +340,35 @@ export const action = async ({ request, params }) => {
       const imageUrl = requestBody.imageUrl;
       const parentCollectionId = requestBody.parentCollectionId;
       const collectionType = requestBody.collectionType; // "manual" or "smart"
+      // Get publicationId from loader (fallback to hardcoded if not present)
+      let onlineStorePublicationId = requestBody.onlineStorePublicationId;
+      if (!onlineStorePublicationId) {
+        // Fallback: fetch publicationId if not present
+        const publicationsResponse = await admin.graphql(
+          `#graphql
+          query GetPublications {
+            publications(first: 10) {
+              edges {
+                node {
+                  id
+                  name
+                }
+              }
+            }
+          }`
+        );
+        const publicationsJson = await publicationsResponse.json();
+        const onlineStorePublication = (publicationsJson.data.publications.edges || []).find(
+          edge => edge.node.name === "Online Store"
+        );
+        onlineStorePublicationId = onlineStorePublication?.node?.id || null;
+      }
       
       // Update collection input
       const collectionInput = {
         id: `gid://shopify/Collection/${collectionId}`,
         title,
         descriptionHtml: description,
-        // Make collection available in online store channel
-        publications: [
-          {
-            publicationId: "gid://shopify/Publication/55650394178"
-          }
-        ]
       };
       
       // If there's an image URL, add it to the collection input
@@ -319,7 +377,7 @@ export const action = async ({ request, params }) => {
           src: imageUrl
         };
       }
-      
+      console.log("Collection input:", collectionInput);
       // Update the collection
       const response = await admin.graphql(
         `#graphql
@@ -385,7 +443,8 @@ export const action = async ({ request, params }) => {
         );
 
         const metafieldJson = await metafieldResponse.json();
-        const metafields = metafieldJson.data.collection.metafields.edges.map(edge => edge.node);
+        // SAFELY map metafields
+        const metafields = (metafieldJson.data?.collection?.metafields?.edges || []).map(edge => edge.node);
         
         // Check if parent metafield exists
         const parentMetafield = metafields.find(m => m.namespace === "custom" && m.key === "parent_collection");
@@ -463,64 +522,68 @@ export const action = async ({ request, params }) => {
 
       // Handle product assignment based on collection type
       if (collectionType === "manual") {
-        // Get the product statuses from form data
-        const productStatuses = requestBody.productStatuses.map(status => JSON.parse(status));
-        
-        // Separate products to add and remove
-        const productsToAdd = productStatuses
-          .filter(status => status.selected)
-          .map(status => status.id);
-        
-        const productsToRemove = productStatuses
-          .filter(status => !status.selected)
-          .map(status => status.id);
-        
-        console.log("Products to add:", productsToAdd);
-        console.log("Products to remove:", productsToRemove);
-        
-        // Add products
-        if (productsToAdd.length > 0) {
-          await admin.graphql(
-            `#graphql
-            mutation addProductsToCollection($id: ID!, $productIds: [ID!]!) {
-              collectionAddProducts(id: $id, productIds: $productIds) {
-                collection {
-                  id
-                }
-                userErrors {
-                  field
-                  message
-                }
-              }
-            }`,
-            {
-              variables: {
-                id: `gid://shopify/Collection/${collectionId}`,
-                productIds: productsToAdd
-              }
-            }
-          );
+        // Fix: Only process if productStatuses is present and is an array
+        let productStatuses = [];
+        if (requestBody.productStatuses) {
+          try {
+            productStatuses = JSON.parse(requestBody.productStatuses);
+          } catch (e) {
+            // fallback: try as array
+            productStatuses = Array.isArray(requestBody.productStatuses) ? requestBody.productStatuses : [];
+          }
         }
-        
-        // Remove products
-        if (productsToRemove.length > 0) {
-          await admin.graphql(
-            `#graphql
-            mutation removeProductsFromCollection($id: ID!, $productIds: [ID!]!) {
-              collectionRemoveProducts(id: $id, productIds: $productIds) {
-                userErrors {
-                  field
-                  message
+        if (Array.isArray(productStatuses) && productStatuses.length > 0) {
+          // Separate products to add and remove
+          const productsToAdd = productStatuses.filter(status => status.selected).map(status => status.id);
+          const productsToRemove = productStatuses.filter(status => !status.selected).map(status => status.id);
+          
+          console.log("Products to add:", productsToAdd);
+          console.log("Products to remove:", productsToRemove);
+          
+          // Add products
+          if (productsToAdd.length > 0) {
+            await admin.graphql(
+              `#graphql
+              mutation addProductsToCollection($id: ID!, $productIds: [ID!]!) {
+                collectionAddProducts(id: $id, productIds: $productIds) {
+                  collection {
+                    id
+                  }
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              }`,
+              {
+                variables: {
+                  id: `gid://shopify/Collection/${collectionId}`,
+                  productIds: productsToAdd
                 }
               }
-            }`,
-            {
-              variables: {
-                id: `gid://shopify/Collection/${collectionId}`,
-                productIds: productsToRemove
+            );
+          }
+          
+          // Remove products
+          if (productsToRemove.length > 0) {
+            await admin.graphql(
+              `#graphql
+              mutation removeProductsFromCollection($id: ID!, $productIds: [ID!]!) {
+                collectionRemoveProducts(id: $id, productIds: $productIds) {
+                  userErrors {
+                    field
+                    message
+                  }
+                }
+              }`,
+              {
+                variables: {
+                  id: `gid://shopify/Collection/${collectionId}`,
+                  productIds: productsToRemove
+                }
               }
-            }
-          );
+            );
+          }
         }
       } else if (collectionType === "smart") {
         // Handle smart collection rules
@@ -586,6 +649,25 @@ export const action = async ({ request, params }) => {
         }
       }
       
+      // After successful collection update, publish to Online Store if publicationId is available
+      if (onlineStorePublicationId) {
+        await admin.graphql(
+          `#graphql
+          mutation publishCollection($id: ID!, $publicationId: ID!) {
+            publishablePublish(input: { id: $id, publicationId: $publicationId }) {
+              publishable { id }
+              userErrors { field message }
+            }
+          }`,
+          {
+            variables: {
+              id: `gid://shopify/Collection/${collectionId}`,
+              publicationId: onlineStorePublicationId
+            }
+          }
+        );
+      }
+      
       return json({
         success: true,
         message: "Collection updated successfully"
@@ -596,28 +678,30 @@ export const action = async ({ request, params }) => {
       const title = requestBody.title;
       const description = requestBody.description || '';
       const imageUrl = requestBody.imageUrl || "";
-      
+      const parentIdRaw = requestBody.parentId;
+      let parentId = parentIdRaw || "";
+      // Normalize parentId to GID format if needed
+      if (parentId && !parentId.startsWith("gid://shopify/Collection/")) {
+        parentId = `gid://shopify/Collection/${parentId}`;
+      }
       if (!title) {
         return json({
           success: false,
           message: "Subcategory title is required"
         });
       }
-      
       try {
         // Create collection input
         const collectionInput = {
           title,
           descriptionHtml: description,
         };
-        
         // If there's an image URL, add it to the collection input
         if (imageUrl && imageUrl.trim() !== "") {
           collectionInput.image = {
             src: imageUrl
           };
         }
-        
         // Create the new collection
         const response = await admin.graphql(
           `#graphql
@@ -643,9 +727,7 @@ export const action = async ({ request, params }) => {
             }
           }
         );
-        
         const responseJson = await response.json();
-        
         if (responseJson.data?.collectionCreate?.userErrors?.length > 0) {
           return json({
             success: false,
@@ -654,8 +736,50 @@ export const action = async ({ request, params }) => {
               responseJson.data.collectionCreate.userErrors.map(e => e.message).join(", ")
           });
         }
-        
         const newCollection = responseJson.data.collectionCreate.collection;
+        // Set parent_collection metafield on the new subcategory if parentId is provided
+        if (parentId) {
+          await admin.graphql(
+            `#graphql
+            mutation setParentMetafield($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                metafields { id key value }
+                userErrors { field message }
+              }
+            }`,
+            {
+              variables: {
+                metafields: [
+                  {
+                    ownerId: newCollection.id,
+                    namespace: "custom",
+                    key: "parent_collection",
+                    value: parentId,
+                    type: "single_line_text_field"
+                  }
+                ]
+              }
+            }
+          );
+        }
+        // After creating the new collection, publish to Online Store if publicationId is available
+        if (onlineStorePublicationId && newCollection?.id) {
+          await admin.graphql(
+            `#graphql
+            mutation publishCollection($id: ID!, $publicationId: ID!) {
+              publishablePublish(input: { id: $id, publicationId: $publicationId }) {
+                publishable { id }
+                userErrors { field message }
+              }
+            }`,
+            {
+              variables: {
+                id: newCollection.id,
+                publicationId: onlineStorePublicationId
+              }
+            }
+          );
+        }
         
         // Now add this collection to the parent's susbcategories metafield
         // First, check if the subcategories metafield exists
@@ -1229,7 +1353,7 @@ export const action = async ({ request, params }) => {
 };
 
 export default function EditCollection() {
-  const { collection, collections, products, pageInfo, isSmartCollection, subcategories, subcategoriesMetafieldId, error } = useLoaderData();
+  const { collection, collections, products, pageInfo, isSmartCollection, subcategories, subcategoriesMetafieldId, parentCollectionId: loaderParentCollectionId, onlineStorePublicationId, error } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
   const navigate = useNavigate();
@@ -1246,7 +1370,7 @@ export default function EditCollection() {
   const [title, setTitle] = useState(collection?.title || "");
   const [description, setDescription] = useState(collection?.descriptionHtml || "");
   const [imageUrl, setImageUrl] = useState(collection?.image?.url || "");
-  const [parentCollectionId, setParentCollectionId] = useState("");
+  const [parentCollectionId, setParentCollectionId] = useState(loaderParentCollectionId || "");
   const [collectionType, setCollectionType] = useState(isSmartCollection ? "smart" : "manual");
   const [isImageProcessing, setIsImageProcessing] = useState(false);
   
@@ -1586,6 +1710,20 @@ export default function EditCollection() {
       formData.append("rules", JSON.stringify(rules));
       formData.append("globalCondition", globalCondition);
     }
+    // Always send onlineStorePublicationId
+    if (onlineStorePublicationId) {
+      formData.append("onlineStorePublicationId", onlineStorePublicationId);
+    }
+    // For manual collections, send selectedProducts as productStatuses
+    if (collectionType === "manual") {
+      // Build productStatuses array: [{id, selected:true} for selected, {id, selected:false} for not selected]
+      const allProductIds = Array.from(new Set([
+        ...products.map(p => p.id),
+        ...selectedProducts
+      ]));
+      const productStatuses = allProductIds.map(id => ({ id, selected: selectedProducts.includes(id) }));
+      formData.append("productStatuses", JSON.stringify(productStatuses));
+    }
     submit(formData, { method: "post" });
     // Refetch the collection after update to get the latest image
     setTimeout(() => {
@@ -1874,6 +2012,25 @@ export default function EditCollection() {
     }
   }, [focusSubcategories, handleOpenCreateSubcatModal]);
 
+  // In EditCollection, build parent options and ensure parent always appears
+  const parentOptions = [
+    { label: "None", value: "" },
+    ...collections
+      .filter(c => c.id !== `gid://shopify/Collection/${collectionId}`)
+      .map(c => ({ label: c.title, value: c.id }))
+  ];
+  // If parentCollectionId is set and not in options, add it
+  const parentInOptions = parentOptions.some(opt => opt.value === parentCollectionId);
+  let finalParentOptions = parentOptions;
+  if (parentCollectionId && !parentInOptions) {
+    // Try to find the parent in all collections
+    const parent = collections.find(c => c.id === parentCollectionId);
+    finalParentOptions = [
+      ...parentOptions,
+      parent ? { label: parent.title, value: parent.id } : { label: `Unknown Parent (${parentCollectionId})`, value: parentCollectionId }
+    ];
+  }
+
   if (error) {
     return (
       <Frame>
@@ -1960,12 +2117,7 @@ export default function EditCollection() {
                   
                   <Select
                     label="Parent Collection"
-                    options={[
-                      { label: "None", value: "" },
-                      ...collections
-                        .filter(c => c.id !== `gid://shopify/Collection/${collectionId}`)
-                        .map(c => ({ label: c.title, value: c.id }))
-                    ]}
+                    options={finalParentOptions}
                     value={parentCollectionId}
                     onChange={setParentCollectionId}
                     helpText="Select a parent collection if this is a subcategory"
@@ -2440,7 +2592,8 @@ export default function EditCollection() {
             primaryAction={{
               content: "Create",
               onAction: handleCreateSubcategory,
-              loading: isCreatingSubcat
+              loading: isCreatingSubcat,
+              disabled: isCreatingSubcat || !newSubcatTitle
             }}
             secondaryActions={[
               {
@@ -2580,7 +2733,7 @@ export default function EditCollection() {
               primary
               onClick={handleUpdateCollection}
               loading={isLoading}
-              disabled={isImageProcessing || !title || !imageUrl}
+              disabled={isImageProcessing || !title}
             >
               Save
             </Button>

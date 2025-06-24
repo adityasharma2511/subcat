@@ -135,6 +135,7 @@ export const action = async ({ request }) => {
     if (imageUrl && imageUrl.trim() !== "") {
       collectionInput.image = { src: imageUrl };
     }
+    // Step 1: Create the collection
     const response = await admin.graphql(
       `#graphql
       mutation createCollection($input: CollectionInput!) {
@@ -152,7 +153,81 @@ export const action = async ({ request }) => {
         message: "Failed to create collection: " + responseJson.data.collectionCreate.userErrors.map(e => e.message).join(", ")
       });
     }
-    return json({ success: true, message: "Collection created successfully" });
+    const newCollection = responseJson.data.collectionCreate.collection;
+    let publicationResult = null;
+    let onlineStorePublicationId = null;
+    let publishError = null;
+    // Step 2: Dynamically fetch Online Store publicationId
+    try {
+      const publicationsResp = await admin.graphql(
+        `#graphql
+        query GetPublications {
+          publications(first: 10) {
+            edges { node { id name } }
+          }
+        }`
+      );
+      const publicationsJson = await publicationsResp.json();
+      const onlineStorePublication = (publicationsJson.data.publications.edges || []).find(
+        edge => edge.node.name === "Online Store"
+      );
+      onlineStorePublicationId = onlineStorePublication?.node?.id || null;
+      if (!onlineStorePublicationId) {
+        publishError = "Online Store publicationId not found.";
+        console.error("[DEBUG] Online Store publicationId not found.");
+      }
+    } catch (err) {
+      publishError = err.message;
+      console.error("[DEBUG] Error fetching publications:", err);
+    }
+    // Step 3: Publish the collection if possible
+    if (onlineStorePublicationId && newCollection?.id) {
+      try {
+        const publishResp = await admin.graphql(
+          `#graphql
+          mutation publishCollection($id: ID!, $publicationId: ID!) {
+            publishablePublish(id: $id, input: [{ publicationId: $publicationId }]) {
+              publishable {
+                publishedOnPublication(publicationId: $publicationId)
+              }
+              userErrors { field message }
+            }
+          }`,
+          {
+            variables: {
+              id: newCollection.id,
+              publicationId: onlineStorePublicationId
+            }
+          }
+        );
+        const publishJson = await publishResp.json();
+        publicationResult = publishJson.data.publishablePublish;
+        if (publishJson.data.publishablePublish.userErrors?.length > 0) {
+          publishError = publishJson.data.publishablePublish.userErrors.map(e => e.message).join(", ");
+          console.error("[DEBUG] Publish userErrors:", publishJson.data.publishablePublish.userErrors);
+        } else {
+          console.log(`[DEBUG] Collection published to Online Store. publicationId: ${onlineStorePublicationId}`);
+        }
+      } catch (err) {
+        publishError = err.message;
+        console.error("[DEBUG] Error publishing collection:", err);
+      }
+    }
+    // Step 4: Return result with debug info
+    if (publishError) {
+      return json({
+        success: true,
+        message: "Collection created, but publication to Online Store failed: " + publishError,
+        publicationId: onlineStorePublicationId,
+        debug: publicationResult
+      });
+    }
+    return json({
+      success: true,
+      message: "Collection created and published to Online Store.",
+      publicationId: onlineStorePublicationId,
+      debug: publicationResult
+    });
   }
 
   if (action === "create_subcategory") {
