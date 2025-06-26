@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate, useLocation, useSubmit, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { ChevronDownIcon, ChevronUpIcon, EditIcon, PlusIcon } from "@shopify/polaris-icons";
+import { ChevronDownIcon, ChevronUpIcon, EditIcon, PlusIcon, MinusIcon } from "@shopify/polaris-icons";
 import {
   Page,
   Layout,
@@ -27,6 +27,7 @@ import {
   TextField,
   Select,
   List,
+  RadioButton,
 } from "@shopify/polaris";
 import CollectionImageUpload from '../components/CollectionImageUpload';
 
@@ -134,12 +135,17 @@ export const action = async ({ request }) => {
     const title = formData.get("title");
     const description = formData.get("description");
     const imageUrl = formData.get("imageUrl");
+    const collectionType = formData.get("collectionType");
+    const ruleSet = formData.get("ruleSet");
     const collectionInput = {
       title,
       descriptionHtml: description
     };
     if (imageUrl && imageUrl.trim() !== "") {
       collectionInput.image = { src: imageUrl };
+    }
+    if (collectionType === "SMART" && ruleSet) {
+      collectionInput.ruleSet = JSON.parse(ruleSet);
     }
     // Step 1: Create the collection
     const response = await admin.graphql(
@@ -241,13 +247,17 @@ export const action = async ({ request }) => {
     const description = formData.get("description") || "";
     const imageUrl = formData.get("imageUrl") || "";
     const parentId = formData.get("parentId");
-    if (!title || !parentId) {
-      return json({ success: false, message: "Subcategory title and parent are required" });
+    const subcatType = formData.get("subcatType");
+    const ruleSet = formData.get("ruleSet");
+    if (!title || !parentId || !subcatType) {
+      return json({ success: false, message: "Subcategory title, parent, and type are required" });
     }
-    // Create the subcategory collection
     const collectionInput = { title, descriptionHtml: description };
     if (imageUrl && imageUrl.trim() !== "") {
       collectionInput.image = { src: imageUrl };
+    }
+    if (subcatType === "SMART" && ruleSet) {
+      collectionInput.ruleSet = JSON.parse(ruleSet);
     }
     const response = await admin.graphql(
       `#graphql
@@ -267,6 +277,65 @@ export const action = async ({ request }) => {
       });
     }
     const newSubcat = responseJson.data.collectionCreate.collection;
+    let publicationResult = null;
+    let onlineStorePublicationId = null;
+    let publishError = null;
+    // Step 2: Dynamically fetch Online Store publicationId
+    try {
+      const publicationsResp = await admin.graphql(
+        `#graphql
+        query GetPublications {
+          publications(first: 10) {
+            edges { node { id name } }
+          }
+        }`
+      );
+      const publicationsJson = await publicationsResp.json();
+      const onlineStorePublication = (publicationsJson.data.publications.edges || []).find(
+        edge => edge.node.name === "Online Store"
+      );
+      onlineStorePublicationId = onlineStorePublication?.node?.id || null;
+      if (!onlineStorePublicationId) {
+        publishError = "Online Store publicationId not found.";
+        console.error("[DEBUG] Online Store publicationId not found.");
+      }
+    } catch (err) {
+      publishError = err.message;
+      console.error("[DEBUG] Error fetching publications:", err);
+    }
+    // Step 3: Publish the subcategory if possible
+    if (onlineStorePublicationId && newSubcat?.id) {
+      try {
+        const publishResp = await admin.graphql(
+          `#graphql
+          mutation publishCollection($id: ID!, $publicationId: ID!) {
+            publishablePublish(id: $id, input: [{ publicationId: $publicationId }]) {
+              publishable {
+                publishedOnPublication(publicationId: $publicationId)
+              }
+              userErrors { field message }
+            }
+          }`,
+          {
+            variables: {
+              id: newSubcat.id,
+              publicationId: onlineStorePublicationId
+            }
+          }
+        );
+        const publishJson = await publishResp.json();
+        publicationResult = publishJson.data.publishablePublish;
+        if (publishJson.data.publishablePublish.userErrors?.length > 0) {
+          publishError = publishJson.data.publishablePublish.userErrors.map(e => e.message).join(", ");
+          console.error("[DEBUG] Publish userErrors:", publishJson.data.publishablePublish.userErrors);
+        } else {
+          console.log(`[DEBUG] Subcategory published to Online Store. publicationId: ${onlineStorePublicationId}`);
+        }
+      } catch (err) {
+        publishError = err.message;
+        console.error("[DEBUG] Error publishing subcategory:", err);
+      }
+    }
     // Get parent's subcat metafield
     const metafieldsResp = await admin.graphql(
       `#graphql
@@ -306,7 +375,21 @@ export const action = async ({ request }) => {
       }`,
       { variables: { metafields: [metafieldInput] } }
     );
-    return json({ success: true, message: "Subcategory created and added to parent collection." });
+    // Step 4: Return result with debug info
+    if (publishError) {
+      return json({
+        success: true,
+        message: "Subcategory created, but publication to Online Store failed: " + publishError,
+        publicationId: onlineStorePublicationId,
+        debug: publicationResult
+      });
+    }
+    return json({
+      success: true,
+      message: "Subcategory created and published to Online Store.",
+      publicationId: onlineStorePublicationId,
+      debug: publicationResult
+    });
   }
 
   return json({ success: false });
@@ -333,6 +416,12 @@ export default function Index() {
   const [banner, setBanner] = useState(null);
   const [isCollectionImageProcessing, setIsCollectionImageProcessing] = useState(false);
   const [isSubcatImageProcessing, setIsSubcatImageProcessing] = useState(false);
+  const [newCollectionType, setNewCollectionType] = useState("");
+  const [newCollectionRules, setNewCollectionRules] = useState([{ column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+  const [newCollectionGlobalCondition, setNewCollectionGlobalCondition] = useState("AND");
+  const [subcatType, setSubcatType] = useState("");
+  const [subcatRules, setSubcatRules] = useState([{ column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+  const [subcatGlobalCondition, setSubcatGlobalCondition] = useState("AND");
   
   // When returning from an edit page, open the accordion of the collection that was edited.
   useEffect(() => {
@@ -366,32 +455,117 @@ export default function Index() {
     setIsCreateSubcatOpen(true);
   };
   
+  const handleAddNewRule = () => {
+    setNewCollectionRules([...newCollectionRules, { column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+  };
+
+  const handleRemoveNewRule = (index) => {
+    const newRules = newCollectionRules.filter((_, i) => i !== index);
+    setNewCollectionRules(newRules);
+  };
+
+  const handleUpdateNewRule = (index, field, value) => {
+    const newRules = [...newCollectionRules];
+    newRules[index][field] = value;
+    setNewCollectionRules(newRules);
+  };
+  
   const handleCreateCollection = () => {
+    if (!newCollectionType) {
+      setBanner(<Banner status="critical" title="Please select a collection type." onDismiss={() => setBanner(null)} />);
+      return;
+    }
+    if (newCollectionType === "smart") {
+      const validRules = newCollectionRules.filter(r => r.column && r.relation && (r.value || r.condition));
+      if (!validRules.length) {
+        setBanner(<Banner status="critical" title="You must add at least one complete rule for a Smart Collection." onDismiss={() => setBanner(null)} />);
+        return;
+      }
+    }
     const formData = new FormData();
     formData.append("action", "create_collection");
     formData.append("title", newCollectionTitle);
     formData.append("description", newCollectionDescription);
     formData.append("imageUrl", newCollectionImage);
+    formData.append("collectionType", newCollectionType === "smart" ? "SMART" : "CUSTOM");
+    if (newCollectionType === "smart") {
+      const validRules = newCollectionRules.filter(r => r.column && r.relation && (r.value || r.condition));
+      const apiRules = validRules.map(({ column, relation, value, condition }) => ({
+        column,
+        relation,
+        condition: value !== undefined ? value : condition
+      }));
+      const ruleSet = {
+        rules: apiRules,
+        appliedDisjunctively: newCollectionGlobalCondition === 'OR'
+      };
+      formData.append("ruleSet", JSON.stringify(ruleSet));
+    }
     submit(formData, { method: "post" });
     setIsCreateCollectionOpen(false);
     setNewCollectionTitle("");
     setNewCollectionDescription("");
     setNewCollectionImage("");
+    setNewCollectionType("");
+    setNewCollectionRules([{ column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+    setNewCollectionGlobalCondition("AND");
+  };
+
+  const handleAddSubcatRule = () => {
+    setSubcatRules([...subcatRules, { column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+  };
+
+  const handleRemoveSubcatRule = (index) => {
+    setSubcatRules(subcatRules.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateSubcatRule = (index, field, value) => {
+    const newRules = [...subcatRules];
+    newRules[index][field] = value;
+    setSubcatRules(newRules);
   };
 
   const handleCreateSubcategory = () => {
+    if (!subcatTitle || !subcatType) {
+      setBanner(<Banner status="critical" title="Please fill in all required fields for subcategory." onDismiss={() => setBanner(null)} />);
+      return;
+    }
+    if (subcatType === "smart") {
+      const validRules = subcatRules.filter(r => r.column && r.relation && (r.value || r.condition));
+      if (!validRules.length) {
+        setBanner(<Banner status="critical" title="You must add at least one complete rule for a Smart Subcategory." onDismiss={() => setBanner(null)} />);
+        return;
+      }
+    }
     const formData = new FormData();
     formData.append("action", "create_subcategory");
     formData.append("title", subcatTitle);
     formData.append("description", subcatDescription);
     formData.append("imageUrl", subcatImage);
     formData.append("parentId", subcatParent);
+    formData.append("subcatType", subcatType === "smart" ? "SMART" : "CUSTOM");
+    if (subcatType === "smart") {
+      const validRules = subcatRules.filter(r => r.column && r.relation && (r.value || r.condition));
+      const apiRules = validRules.map(({ column, relation, value, condition }) => ({
+        column,
+        relation,
+        condition: value !== undefined ? value : condition
+      }));
+      const ruleSet = {
+        rules: apiRules,
+        appliedDisjunctively: subcatGlobalCondition === 'OR'
+      };
+      formData.append("ruleSet", JSON.stringify(ruleSet));
+    }
     submit(formData, { method: "post" });
     setIsCreateSubcatOpen(false);
     setSubcatTitle("");
     setSubcatDescription("");
     setSubcatImage("");
     setSubcatParent("");
+    setSubcatType("");
+    setSubcatRules([{ column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
+    setSubcatGlobalCondition("AND");
   };
   
   useEffect(() => {
@@ -505,7 +679,11 @@ export default function Index() {
         }
       ]}
     >
-      {banner}
+      {banner && (
+        <div style={{ marginBottom: 16 }}>
+          {banner}
+        </div>
+      )}
       <Modal
         open={isCreateCollectionOpen}
         onClose={() => setIsCreateCollectionOpen(false)}
@@ -514,7 +692,7 @@ export default function Index() {
           content: "Create",
           onAction: handleCreateCollection,
           loading: isLoading,
-          disabled: isCollectionImageProcessing || !newCollectionTitle
+          disabled: isCollectionImageProcessing || !newCollectionTitle || !newCollectionType || (newCollectionType === "smart" && newCollectionRules.filter(r => r.column && r.relation && (r.value || r.condition)).length === 0)
         }}
         secondaryActions={[{ content: "Cancel", onAction: () => setIsCreateCollectionOpen(false) }]}
       >
@@ -540,6 +718,124 @@ export default function Index() {
                 initialImageUrl={newCollectionImage}
                 onProcessingChange={setIsCollectionImageProcessing}
               />
+              <BlockStack gap="200">
+                <Text variant="headingSm">Collection Type <span style={{ color: 'red' }}>*</span></Text>
+                <Text variant="bodySm" tone="subdued">Once created, collection type cannot be changed.</Text>
+                <RadioButton
+                  label="Manual (Custom) Collection"
+                  checked={newCollectionType === "manual"}
+                  id="manual"
+                  name="collectionType"
+                  onChange={() => setNewCollectionType("manual")}
+                  disabled={false}
+                />
+                <RadioButton
+                  label="Smart (Automated) Collection"
+                  checked={newCollectionType === "smart"}
+                  id="smart"
+                  name="collectionType"
+                  onChange={() => setNewCollectionType("smart")}
+                  disabled={false}
+                />
+              </BlockStack>
+              {newCollectionType === "smart" && (
+                <BlockStack gap="400">
+                  <Text variant="headingMd">Smart Collection Rules</Text>
+                  <Text variant="bodySm" tone="subdued">Products that match these rules will be automatically added to this collection.</Text>
+                  <FormLayout>
+                    <FormLayout.Group>
+                      <RadioButton
+                        label="Products must match all conditions"
+                        checked={newCollectionGlobalCondition === 'AND'}
+                        id="all_conditions"
+                        name="globalCondition"
+                        onChange={() => setNewCollectionGlobalCondition('AND')}
+                        disabled={false}
+                      />
+                      <RadioButton
+                        label="Products can match any condition"
+                        checked={newCollectionGlobalCondition === 'OR'}
+                        id="any_condition"
+                        name="globalCondition"
+                        onChange={() => setNewCollectionGlobalCondition('OR')}
+                        disabled={false}
+                      />
+                    </FormLayout.Group>
+                    {newCollectionRules.map((rule, index) => (
+                      <FormLayout.Group key={index} condensed>
+                        <Card>
+                          <BlockStack gap="200">
+                            <InlineStack align="space-between">
+                              <Text variant="headingSm" as="h3">Rule {index + 1}</Text>
+                              <Button
+                                icon={PlusIcon}
+                                onClick={handleAddNewRule}
+                                accessibilityLabel="Add rule"
+                                disabled={false}
+                              >
+                                Add Rule
+                              </Button>
+                              {newCollectionRules.length > 1 && (
+                                <Button
+                                  icon={MinusIcon}
+                                  onClick={() => handleRemoveNewRule(index)}
+                                  accessibilityLabel="Remove rule"
+                                  disabled={false}
+                                />
+                              )}
+                            </InlineStack>
+                            <FormLayout>
+                              <FormLayout.Group>
+                                <Select
+                                  label="Column"
+                                  options={[
+                                    { label: "Title", value: "TITLE" },
+                                    { label: "Type", value: "TYPE" },
+                                    { label: "Vendor", value: "VENDOR" },
+                                    { label: "Price", value: "PRICE" },
+                                    { label: "Tag", value: "TAG" },
+                                    { label: "Category", value: "CATEGORY" },
+                                    { label: "Inventory Stock", value: "INVENTORY_STOCK" },
+                                    { label: "Weight", value: "WEIGHT" },
+                                    { label: "Variants", value: "VARIANT" },
+                                    { label: "Metafield", value: "METAFIELD" }
+                                  ]}
+                                  value={rule.column}
+                                  onChange={(value) => handleUpdateNewRule(index, "column", value)}
+                                  disabled={false}
+                                />
+                                <Select
+                                  label="Relation"
+                                  options={[
+                                    { label: "Equals", value: "EQUALS" },
+                                    { label: "Not equals", value: "NOT_EQUALS" },
+                                    { label: "Greater than", value: "GREATER_THAN" },
+                                    { label: "Less than", value: "LESS_THAN" },
+                                    { label: "Starts with", value: "STARTS_WITH" },
+                                    { label: "Ends with", value: "ENDS_WITH" },
+                                    { label: "Contains", value: "CONTAINS" },
+                                    { label: "Not contains", value: "NOT_CONTAINS" }
+                                  ]}
+                                  value={rule.relation}
+                                  onChange={(value) => handleUpdateNewRule(index, "relation", value)}
+                                  disabled={false}
+                                />
+                                <TextField
+                                  label="Value"
+                                  value={rule.value || ""}
+                                  onChange={(value) => handleUpdateNewRule(index, "value", value)}
+                                  autoComplete="off"
+                                  disabled={false}
+                                />
+                              </FormLayout.Group>
+                            </FormLayout>
+                          </BlockStack>
+                        </Card>
+                      </FormLayout.Group>
+                    ))}
+                  </FormLayout>
+                </BlockStack>
+              )}
             </FormLayout>
           </Form>
         </Modal.Section>
@@ -553,7 +849,7 @@ export default function Index() {
           content: "Create",
           onAction: handleCreateSubcategory,
           loading: isLoading,
-          disabled: isSubcatImageProcessing || !subcatTitle || !subcatParent
+          disabled: isSubcatImageProcessing || !subcatTitle || !subcatType || (subcatType === "smart" && subcatRules.filter(r => r.column && r.relation && (r.value || r.condition)).length === 0)
         }}
         secondaryActions={[{ content: "Cancel", onAction: () => setIsCreateSubcatOpen(false) }]}
       >
@@ -575,13 +871,123 @@ export default function Index() {
                 autoComplete="off"
                 requiredIndicator
               />
-              <TextField
-                label="Description"
-                value={subcatDescription}
-                onChange={setSubcatDescription}
-                autoComplete="off"
-                multiline={4}
-              />
+              <BlockStack gap="200">
+                <Text variant="headingSm">Collection Type <span style={{ color: 'red' }}>*</span></Text>
+                <RadioButton
+                  label="Manual (Custom) Collection"
+                  checked={subcatType === "manual"}
+                  id="subcat-manual"
+                  name="subcatType"
+                  onChange={() => setSubcatType("manual")}
+                  disabled={false}
+                />
+                <RadioButton
+                  label="Smart (Automated) Collection"
+                  checked={subcatType === "smart"}
+                  id="subcat-smart"
+                  name="subcatType"
+                  onChange={() => setSubcatType("smart")}
+                  disabled={false}
+                />
+              </BlockStack>
+              {subcatType === "smart" && (
+                <BlockStack gap="400">
+                  <Text variant="headingMd">Smart Collection Rules</Text>
+                  <Text variant="bodySm" tone="subdued">Products that match these rules will be automatically added to this subcategory.</Text>
+                  <FormLayout>
+                    <FormLayout.Group>
+                      <RadioButton
+                        label="Products must match all conditions"
+                        checked={subcatGlobalCondition === 'AND'}
+                        id="subcat_all_conditions"
+                        name="subcatGlobalCondition"
+                        onChange={() => setSubcatGlobalCondition('AND')}
+                        disabled={false}
+                      />
+                      <RadioButton
+                        label="Products can match any condition"
+                        checked={subcatGlobalCondition === 'OR'}
+                        id="subcat_any_condition"
+                        name="subcatGlobalCondition"
+                        onChange={() => setSubcatGlobalCondition('OR')}
+                        disabled={false}
+                      />
+                    </FormLayout.Group>
+                    {subcatRules.map((rule, index) => (
+                      <FormLayout.Group key={index} condensed>
+                        <Card>
+                          <BlockStack gap="200">
+                            <InlineStack align="space-between">
+                              <Text variant="headingSm" as="h3">Rule {index + 1}</Text>
+                              <Button
+                                icon={PlusIcon}
+                                onClick={handleAddSubcatRule}
+                                accessibilityLabel="Add rule"
+                                disabled={false}
+                              >
+                                Add Rule
+                              </Button>
+                              {subcatRules.length > 1 && (
+                                <Button
+                                  icon={MinusIcon}
+                                  onClick={() => handleRemoveSubcatRule(index)}
+                                  accessibilityLabel="Remove rule"
+                                  disabled={false}
+                                />
+                              )}
+                            </InlineStack>
+                            <FormLayout>
+                              <FormLayout.Group>
+                                <Select
+                                  label="Column"
+                                  options={[
+                                    { label: "Title", value: "TITLE" },
+                                    { label: "Type", value: "TYPE" },
+                                    { label: "Vendor", value: "VENDOR" },
+                                    { label: "Price", value: "PRICE" },
+                                    { label: "Tag", value: "TAG" },
+                                    { label: "Category", value: "CATEGORY" },
+                                    { label: "Inventory Stock", value: "INVENTORY_STOCK" },
+                                    { label: "Weight", value: "WEIGHT" },
+                                    { label: "Variants", value: "VARIANT" },
+                                    { label: "Metafield", value: "METAFIELD" }
+                                  ]}
+                                  value={rule.column}
+                                  onChange={(value) => handleUpdateSubcatRule(index, "column", value)}
+                                  disabled={false}
+                                />
+                                <Select
+                                  label="Relation"
+                                  options={[
+                                    { label: "Equals", value: "EQUALS" },
+                                    { label: "Not equals", value: "NOT_EQUALS" },
+                                    { label: "Greater than", value: "GREATER_THAN" },
+                                    { label: "Less than", value: "LESS_THAN" },
+                                    { label: "Starts with", value: "STARTS_WITH" },
+                                    { label: "Ends with", value: "ENDS_WITH" },
+                                    { label: "Contains", value: "CONTAINS" },
+                                    { label: "Not contains", value: "NOT_CONTAINS" }
+                                  ]}
+                                  value={rule.relation}
+                                  onChange={(value) => handleUpdateSubcatRule(index, "relation", value)}
+                                  disabled={false}
+                                />
+                                <TextField
+                                  label="Value"
+                                  value={rule.value || ""}
+                                  onChange={(value) => handleUpdateSubcatRule(index, "value", value)}
+                                  autoComplete="off"
+                                  disabled={false}
+                                />
+                              </FormLayout.Group>
+                            </FormLayout>
+                          </BlockStack>
+                        </Card>
+                      </FormLayout.Group>
+                    ))}
+                  </FormLayout>
+                </BlockStack>
+              )}
               <CollectionImageUpload
                 onImageUpload={setSubcatImage}
                 initialImageUrl={subcatImage}
