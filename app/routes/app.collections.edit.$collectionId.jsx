@@ -35,8 +35,9 @@ import { useState, useCallback, useEffect } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit, useNavigate, useNavigation, useParams, Link, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { PlusIcon, MinusIcon, SearchIcon, XIcon, FilterIcon, CollectionIcon } from "@shopify/polaris-icons";
+import { PlusIcon, MinusIcon, SearchIcon, XIcon, FilterIcon, CollectionIcon, DragHandleIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import CollectionImageUpload from '../components/CollectionImageUpload';
+import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
 
 // Add a helper to fetch all collections with pagination
 async function fetchAllCollections(admin, query, variables = {}) {
@@ -954,6 +955,74 @@ export const action = async ({ request, params }) => {
   }
 };
 
+// Add this SortableItem component for subcategories
+function DraggableSubcatItem({ subcategory, index, onRemove }) {
+  return (
+    <Draggable draggableId={subcategory.id} index={index}>
+      {(provided, snapshot) => {
+        const draggingStyle = snapshot.isDragging
+          ? {
+              zIndex: 9999,
+              position: 'fixed',
+              left: provided.draggableProps.style?.left,
+              top: provided.draggableProps.style?.top,
+              width: provided.draggableProps.style?.width || '100%',
+              pointerEvents: 'auto',
+            }
+          : {};
+        return (
+          <div
+            ref={provided.innerRef}
+            {...provided.draggableProps}
+            style={{
+              ...provided.draggableProps.style,
+              ...draggingStyle,
+              background: '#fff',
+              borderRadius: 4,
+              marginBottom: 12,
+              outline: 'none',
+              listStyle: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '12px 0',
+              borderBottom: '1px solid #E1E3E5',
+              minHeight: 64,
+              boxShadow: snapshot.isDragging ? '0 4px 16px rgba(0,0,0,0.10)' : 'none',
+              opacity: snapshot.isDragging ? 0.85 : 1,
+            }}
+          >
+            <span {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center', marginRight: 16 }}>
+              <Icon source={DragHandleIcon} />
+            </span>
+            <Thumbnail
+              source={subcategory.image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
+              alt={subcategory.title}
+              size="small"
+            />
+            {/* Flex container for title and Remove button */}
+            <div style={{ display: 'flex', alignItems: 'center', flex: 1, marginLeft: 20 }}>
+              <Text variant="bodyMd" fontWeight="bold" style={{ marginRight: 16 }}>{subcategory.title}</Text>
+              <div style={{ marginLeft: 'auto', marginRight: 12 }}>
+                <Tooltip content="Remove subcategory">
+                  <Button
+                    tone="critical"
+                    icon={XIcon}
+                    onClick={() => onRemove(subcategory.id)}
+                    accessibilityLabel={`Remove ${subcategory.title}`}
+                    size="slim"
+                  >
+                    Remove
+                  </Button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        );
+      }}
+    </Draggable>
+  );
+}
+
 export default function EditCollection() {
   const { collection, collections, products, pageInfo, isSmartCollection, collectionTypeShopify, subcategories, subcategoriesMetafieldId, parentCollectionId: loaderParentCollectionId, onlineStorePublicationId, error } = useLoaderData();
   console.log("collection", collection);
@@ -1716,6 +1785,9 @@ export default function EditCollection() {
     setNewSubcatRules(newRules);
   };
 
+  // Add state for drag-and-drop loading
+  const [isSubcatReordering, setIsSubcatReordering] = useState(false);
+
   if (error) {
     return (
       <Frame>
@@ -1756,19 +1828,20 @@ export default function EditCollection() {
           {/* Custom header row for back, title, and actions */}
           <div style={{ padding: '24px 0 0 0' }}>
             <InlineStack align="space-between" blockAlign="center" gap="400">
-              <InlineStack gap="200" blockAlign="center">
+              <InlineStack gap="0" blockAlign="center">
                 <Button
                   plain
                   icon={
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Icon source={CollectionIcon} tone="base" />
                     </span>
                   }
                   onClick={() => navigate(returnTo ? `${returnTo}?fromCollectionId=${collectionId}` : "/app/dashboard")}
                   accessibilityLabel="Back to Collections"
                 />
+                <Icon source={ChevronRightIcon} tone="base" />
                 <Text variant="headingLg" as="h1">
-                {collection.title}
+                  {collection.title}
                 </Text>
               </InlineStack>
               <InlineStack gap="200" blockAlign="center">
@@ -2149,42 +2222,63 @@ export default function EditCollection() {
                     <Button onClick={handleOpenCreateSubcatModal}>Create Subcategory</Button>
                   </InlineStack>
                   {subcategoriesList.length > 0 ? (
-                    <ResourceList
-                      items={subcategoriesList.filter((subcategory, index, self) => 
-                        index === self.findIndex(s => s.id === subcategory.id)
+                    <div style={{ position: 'relative' }}>
+                      {isSubcatReordering && (
+                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(255,255,255,0.5)', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Spinner size="small" />
+                        </div>
                       )}
-                      renderItem={(subcategory) => {
-                        const { id, title, image } = subcategory;
-                        const media = (
-                          <Thumbnail
-                            source={image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"}
-                            alt={title}
-                          />
-                        );
-                        return (
-                          <ResourceList.Item
-                            id={id}
-                            media={media}
-                            accessibilityLabel={`Collection: ${title}`}
-                            shortcutActions={[
-                              {
-                                content: 'Remove',
-                                icon: XIcon,
-                                accessibilityLabel: `Remove ${title}`,
-                                onClick: () => handleRemoveSubcategory(id)
-                              }
-                            ]}
-                            url={`/app/collections/edit/${id.replace('gid://shopify/Collection/', '')}`}
-                          >
-                            <Text variant="bodyMd" fontWeight="bold">{title}</Text>
-                          </ResourceList.Item>
-                        );
-                      }}
-                    />
+                      {/* Only render DragDropContext in browser */}
+                      {typeof window !== 'undefined' && (
+                        <DragDropContext
+                          onDragEnd={async (result) => {
+                            if (!result.destination) return;
+                            const oldIndex = result.source.index;
+                            const newIndex = result.destination.index;
+                            if (oldIndex === newIndex) return;
+                            // Defensive: filter out duplicates before reordering
+                            const uniqueList = subcategoriesList.filter((subcategory, idx, self) => idx === self.findIndex(s => s.id === subcategory.id));
+                            const newList = Array.from(uniqueList);
+                            const [removed] = newList.splice(oldIndex, 1);
+                            newList.splice(newIndex, 0, removed);
+                            setSubcategoriesList(newList);
+                            setIsSubcatReordering(true);
+                            try {
+                              const fd = new FormData();
+                              fd.append('action', 'update_subcategories');
+                              fd.append('subcategoryIds', JSON.stringify(newList.map(s => s.id)));
+                              fd.append('metafieldId', subcategoriesMetafieldId || '');
+                              await fetch(window.location.pathname, {
+                                method: 'POST',
+                                body: fd,
+                              });
+                            } finally {
+                              setIsSubcatReordering(false);
+                            }
+                          }}
+                        >
+                          <Droppable droppableId="subcat-droppable">
+                            {(provided) => (
+                              <div ref={provided.innerRef} {...provided.droppableProps} style={{ minHeight: 40 }}>
+                                {subcategoriesList.filter((subcategory, index, self) => index === self.findIndex(s => s.id === subcategory.id)).map((subcategory, index) => (
+                                  <DraggableSubcatItem
+                                    key={subcategory.id}
+                                    subcategory={subcategory}
+                                    index={index}
+                                    onRemove={handleRemoveSubcategory}
+                                  />
+                                ))}
+                                {provided.placeholder}
+                              </div>
+                            )}
+                          </Droppable>
+                        </DragDropContext>
+                      )}
+                    </div>
                   ) : (
                     <EmptyState
                       heading="No subcategories yet"
-                      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                      image="https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"
                     >
                       <p>Add existing collections or create new subcategories for this collection.</p>
                     </EmptyState>

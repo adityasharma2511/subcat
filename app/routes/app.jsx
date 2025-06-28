@@ -49,9 +49,9 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
-        <Link to="/app/main">Collections Manager</Link>
         <Link to="/app/products">Products</Link>
         <Link to="/app/dashboard">Collections</Link>
+        <Link to="/app/widget">Widget</Link>
       </NavMenu>
       {isLoading ? (
         <Page>
