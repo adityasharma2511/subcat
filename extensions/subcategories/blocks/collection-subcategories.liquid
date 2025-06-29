@@ -1,0 +1,150 @@
+{% comment %}
+  Enhanced Collection Subcategories Block
+  - Reads all settings from shop.metafields.custom.widget_settings.value | parse_json
+  - Applies layout, alignment, text size, show heading, slider (mobile/desktop), etc.
+{% endcomment %}
+
+{% assign subcat_metafield = collection.metafields.custom.subcat %}
+{% assign subcategories = subcat_metafield.value %}
+
+{% if subcategories == blank or subcategories == nil %}
+  {% assign subcategories = '' | split: ',' %}
+{% endif %}
+
+{% assign widget_settings = shop.metafields.custom.widget_settings.value | parse_json %}
+{%- assign layout = widget_settings.layout | default: 'circle' -%}
+{%- assign text_size = widget_settings.text_size | default: 16 -%}
+{%- assign alignment = widget_settings.alignment | default: 'center' -%}
+{%- assign heading_text = widget_settings.heading_text | default: 'Subcategories' -%}
+{%- assign show_heading = widget_settings.show_heading -%}
+{%- assign scroll_enabled = widget_settings.scroll_enabled -%}
+{%- assign custom_border_radius_enabled = widget_settings.custom_border_radius_enabled -%}
+{%- assign custom_border_radius = widget_settings.custom_border_radius -%}
+{%- assign show_product_count = widget_settings.show_product_count -%}
+{%- assign section_padding = widget_settings.section_padding | default: 16 -%}
+{%- assign bubble_bg_color = widget_settings.bubble_bg_color | default: '#D6EDFF' -%}
+{%- assign bubble_text_color = widget_settings.bubble_text_color | default: '#19536B' -%}
+{%- assign text_transform = widget_settings.text_transform | default: 'none' -%}
+{%- assign bold_titles = widget_settings.bold_titles | default: false -%}
+{%- assign image_size = widget_settings.image_size | default: 'medium' -%}
+{%- assign image_size_px = 80 -%}
+{%- if image_size == 'small' -%}
+  {%- assign image_size_px = 48 -%}
+{%- elsif image_size == 'large' -%}
+  {%- assign image_size_px = 120 -%}
+{%- endif -%}
+{%- assign show_title = widget_settings.show_title -%}
+{%- assign show_image = widget_settings.show_image -%}
+
+{%- assign text_size_class = 'font-size: ' | append: text_size | append: 'px;' -%}
+
+{%- assign align_style = '' -%}
+{%- if alignment == 'left' -%}
+  {%- assign align_style = 'justify-content: flex-start;' -%}
+{%- elsif alignment == 'right' -%}
+  {%- assign align_style = 'justify-content: flex-end;' -%}
+{%- else -%}
+  {%- assign align_style = 'justify-content: center;' -%}
+{%- endif -%}
+
+{%- assign image_shape = '50%' -%}
+{%- if layout == 'square' -%}
+  {%- assign image_shape = '8px' -%}
+{%- endif -%}
+{%- if custom_border_radius_enabled and custom_border_radius != blank -%}
+  {%- assign image_shape = custom_border_radius | append: 'px' -%}
+{%- endif -%}
+
+{% if subcategories %}
+  <div class="collection-subcategories-block" style="padding: {{ section_padding }}px 0;">
+    {% if show_heading %}
+      <h2 style="margin-bottom: 1.5rem; text-align: {{ alignment }};">{{ heading_text }}</h2>
+    {% endif %}
+    {% if scroll_enabled %}
+      <style>
+        .collection-subcategories-block .subcat-scrollbar-hide {
+          scrollbar-width: none; /* Firefox */
+          -ms-overflow-style: none; /* IE 10+ */
+        }
+        .collection-subcategories-block .subcat-scrollbar-hide::-webkit-scrollbar {
+          display: none; /* Chrome/Safari/Webkit */
+        }
+      </style>
+      <div class="subcat-scrollbar-hide" style="display: flex; padding-top:8px; gap: 2rem; overflow-x: auto; white-space: nowrap; {{ align_style }} scroll-behavior: smooth; scroll-snap-type: x mandatory;">
+        {% for subcat in subcategories %}
+          <a href="{{ subcat.url | default: '#' }}" style="text-decoration: none; color: inherit; display: inline-block; scroll-snap-align: start;{% if image_size == 'large' %} padding-left:8px;{% endif %}">
+            <div style="display: flex; flex-direction: column; align-items: center; width: 110px;">
+              {% if show_image %}
+                <div style="position: relative; width: {{ image_size_px }}px; height: {{ image_size_px }}px; border-radius: {{ image_shape }};  background: #f6f6f7; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; align-items: center; justify-content: center; margin-bottom: 0.5rem;">
+                  {% if show_product_count and subcat.products_count and subcat.products_count > 0 %}
+                    <span style="position: absolute; top: -6px; right: -6px; min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: {{ bubble_bg_color }}; color: {{ bubble_text_color }}; border-radius: 999px; font-size: 14px; font-weight: 600; padding: 0 7px; box-shadow: 0 1px 4px #0001; z-index: 2;">{{ subcat.products_count }}</span>
+                  {% endif %}
+                  {% if subcat.image and subcat.image.src %}
+                    <img
+                      src="{{ subcat.image.src | img_url: '160x160' }}"
+                      alt="{{ subcat.title | escape }}"
+                      style="width: {{ image_size_px }}px; height: {{ image_size_px }}px; object-fit: cover; border-radius: {{ image_shape }};">
+                  {% else %}
+                    <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 2rem;">
+                      &#128247;
+                    </div>
+                  {% endif %}
+                </div>
+              {% endif %}
+              {% if show_title %}
+                <div style="text-align: center; font-weight: {% if bold_titles %}700{% else %}500{% endif %}; max-width: 100px; white-space: normal; {{ text_size_class }}{% if text_transform != 'none' %} text-transform: {{ text_transform }};{% endif %}">
+                  {{ subcat.title }}
+                </div>
+              {% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div style="display: flex; flex-wrap: wrap; gap: 2rem; {{ align_style }}">
+        {% assign shown = 0 %}
+        {% for subcat in subcategories %}
+          {% comment %} Always show all subcategories {% endcomment %}
+          <a href="{{ subcat.url | default: '#' }}" style="text-decoration: none; color: inherit;">
+            <div style="display: flex; flex-direction: column; align-items: center; width: 110px;">
+              {% if show_image %}
+                <div style="position: relative; width: {{ image_size_px }}px; height: {{ image_size_px }}px; border-radius: {{ image_shape }}; overflow: hidden; background: #f6f6f7; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; align-items: center; justify-content: center; margin-bottom: 0.5rem;">
+                  {% if show_product_count and subcat.products_count and subcat.products_count > 0 %}
+                    <span style="position: absolute; top: 6px; right: 6px; min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: {{ bubble_bg_color }}; color: {{ bubble_text_color }}; border-radius: 999px; font-size: 14px; font-weight: 600; padding: 0 7px; box-shadow: 0 1px 4px #0001; z-index: 2;">{{ subcat.products_count }}</span>
+                  {% endif %}
+                  {% if subcat.image and subcat.image.src %}
+                    <img
+                      src="{{ subcat.image.src | img_url: '160x160' }}"
+                      alt="{{ subcat.title | escape }}"
+                      style="width: {{ image_size_px }}px; height: {{ image_size_px }}px; object-fit: cover; border-radius: {{ image_shape }};">
+                  {% else %}
+                    <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 2rem;">
+                      &#128247;
+                    </div>
+                  {% endif %}
+                </div>
+              {% endif %}
+              {% if show_title %}
+                <div style="text-align: center; font-weight: {% if bold_titles %}700{% else %}500{% endif %}; max-width: 100px; white-space: normal; {{ text_size_class }}{% if text_transform != 'none' %} text-transform: {{ text_transform }};{% endif %}">
+                  {{ subcat.title }}
+                </div>
+              {% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+
+{% endif %}
+
+{% schema %}
+{
+  "name": "Subcategories",
+  "target": "section",
+  "settings": [
+
+  ]
+}
+{% endschema %}

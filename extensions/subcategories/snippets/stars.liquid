@@ -1,0 +1,20 @@
+{{ 'ratings.stars.label' | t }}:
+
+{%- for i in (1..rating) -%}
+  ★
+{%- endfor -%}
+{%- assign blank_stars = 5 | minus: rating -%}
+{%- for i in (1..blank_stars) -%}
+  ☆
+{%- endfor -%}
+
+{% assign subcat_metafield = collection.metafields.custom.subcat %}
+{% assign subcat_ids = subcat_metafield.value | parse_json %}
+
+{% for id in subcat_ids %}
+  {% assign subcat = collections[id] %}
+  {% if subcat %}
+    {{ subcat.title }}<br>
+  {% endif %}
+{% endfor %}
+
