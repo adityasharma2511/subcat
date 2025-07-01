@@ -6,14 +6,21 @@ import {
   ScrollRestoration,
   useRouteError,
   useNavigation,
+  useLoaderData,
 } from "@remix-run/react";
+import { json } from "@remix-run/node";
 import { useEffect } from "react";
 import NProgress from "nprogress";
 import nProgressStyles from "./nprogress.css?url";
+import { AppProvider } from "@shopify/shopify-app-remix/react";
 
 export const links = () => [
   { rel: "stylesheet", href: nProgressStyles },
 ];
+
+export const loader = () => {
+  return json({ apiKey: process.env.SHOPIFY_API_KEY });
+};
 
 export function ErrorBoundary() {
   const error = useRouteError();
@@ -38,6 +45,7 @@ export function ErrorBoundary() {
 
 export default function App() {
   const navigation = useNavigation();
+  const { apiKey } = useLoaderData();
 
   useEffect(() => {
     if (navigation.state === "loading" || navigation.state === "submitting") {
@@ -61,7 +69,9 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <Outlet />
+        <AppProvider apiKey={apiKey} isEmbeddedApp>
+          <Outlet />
+        </AppProvider>
         <ScrollRestoration />
         <Scripts />
       </body>

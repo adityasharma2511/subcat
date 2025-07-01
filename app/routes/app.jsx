@@ -52,6 +52,7 @@ export default function App() {
         <Link to="/app/products">Products</Link>
         <Link to="/app/dashboard">Collections</Link>
         <Link to="/app/widget">Widget</Link>
+        <Link to="/app/pricing">Pricing</Link>
       </NavMenu>
       {isLoading ? (
         <Page>

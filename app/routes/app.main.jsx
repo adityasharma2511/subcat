@@ -553,9 +553,9 @@ export default function Main() {
   
   if (error) {
     return (
-      <Page title="Collections">
+      <Page title="Collection">
         <EmptyState
-          heading="Error loading collections"
+          heading="Error loading collection"
           image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
         >
           <p>{error}</p>

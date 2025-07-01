@@ -32,7 +32,8 @@ import {
 import CollectionImageUpload from '../components/CollectionImageUpload';
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  console.log('[DEBUG] Session in app._index.jsx loader:', session);
   
   try {
     // Fetch all collections with their subcategory metafields
@@ -586,7 +587,7 @@ export default function Index() {
     return (
       <Page title="Collections">
         <EmptyState
-          heading="Error loading collections"
+          heading="Error loading collection"
           image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
         >
           <p>{error}</p>
@@ -665,7 +666,7 @@ export default function Index() {
 
   return (
     <Page
-      title="Collections Manager"
+      title="Collections Managers"
       primaryAction={{
         content: "Create Collection",
         onAction: () => setIsCreateCollectionOpen(true),

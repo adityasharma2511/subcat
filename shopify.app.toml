@@ -1,9 +1,9 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "b210868519badacaf28ab2774abf9846"
-name = "Try us - AR"
-handle = "try-us-ar"
-application_url = "https://zu-bonds-learners-gender.trycloudflare.com"
+name = "Collection Tree"
+handle = "am-collection-tree"
+application_url = "https://generations-portion-smart-apply.trycloudflare.com"
 embedded = true
 
 [build]
@@ -11,26 +11,26 @@ automatically_update_urls_on_dev = true
 dev_store_url = "chichaus-essentials.myshopify.com"
 include_config_on_deploy = true
 
-[access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_files,write_products,write_publications,read_publications"
-
-[auth]
-redirect_urls = ["https://zu-bonds-learners-gender.trycloudflare.com/auth/callback", "https://zu-bonds-learners-gender.trycloudflare.com/auth/shopify/callback", "https://zu-bonds-learners-gender.trycloudflare.com/api/auth/callback"]
-
 [webhooks]
 api_version = "2024-10"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
+  uri = "https://therapy-conviction-radio-injury.trycloudflare.com/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
+  uri = "https://therapy-conviction-radio-injury.trycloudflare.com/webhooks/app/uninstalled"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_publications,write_files,write_products,write_publications"
+
+[auth]
+redirect_urls = ["https://generations-portion-smart-apply.trycloudflare.com/auth/callback", "https://generations-portion-smart-apply.trycloudflare.com/auth/shopify/callback", "https://generations-portion-smart-apply.trycloudflare.com/api/auth/callback"]
 
 [app_proxy]
-url = "https://zu-bonds-learners-gender.trycloudflare.com/frontrequest"
+url = "https://generations-portion-smart-apply.trycloudflare.com/frontrequest"
 subpath = "aditya"
 prefix = "apps"
 
