@@ -2278,8 +2278,7 @@ export default function EditCollection() {
                   ) : (
                     <EmptyState
                       heading="No subcategories yet"
-                      image="https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-collection-1.png"
-                    >
+                   >
                       <p>Add existing collections or create new subcategories for this collection.</p>
                     </EmptyState>
                   )}

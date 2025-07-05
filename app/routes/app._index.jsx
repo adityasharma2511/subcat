@@ -28,6 +28,8 @@ import {
   Select,
   List,
   RadioButton,
+  IndexFilters,
+  Filters,
 } from "@shopify/polaris";
 import CollectionImageUpload from '../components/CollectionImageUpload';
 
@@ -35,40 +37,42 @@ export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   console.log('[DEBUG] Session in app._index.jsx loader:', session);
   
-  try {
-    // Fetch all collections with their subcategory metafields
-    const collectionsResponse = await admin.graphql(
-      `#graphql
-      query GetCollectionsWithSubcategories {
-        collections(first: 100, query: "parent_collection_id:null") {
-          edges {
-            node {
-              id
-              title
-              handle
-              image {
-                url
-              }
-              metafields(first: 10, namespace: "custom") {
-                edges {
-                  node {
-                    id
-                    namespace
-                    key
-                    type
-                    value
-                    references(first: 50) {
-                      edges {
-                        node {
-                          ... on Collection {
-                            id
-                            title
-                            handle
-                            image {
-                              url
-                            }
-                            productsCount {
-                              count
+  // Helper to fetch all pages for a given query
+  async function fetchAllCollections() {
+    let collections = [];
+    let hasNextPage = true;
+    let endCursor = null;
+    while (hasNextPage) {
+      const collectionsQuery = `#graphql
+        query GetCollectionsWithSubcategories($after: String) {
+          collections(first: 100, after: $after, query: "parent_collection_id:null") {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                title
+                handle
+                image { url }
+                productsCount { count }
+                metafields(first: 10, namespace: \"custom\") {
+                  pageInfo { hasNextPage endCursor }
+                  edges {
+                    node {
+                      id
+                      namespace
+                      key
+                      type
+                      value
+                      references(first: 50) {
+                        pageInfo { hasNextPage endCursor }
+                        edges {
+                          node {
+                            ... on Collection {
+                              id
+                              title
+                              handle
+                              image { url }
+                              productsCount { count }
                             }
                           }
                         }
@@ -77,32 +81,118 @@ export const loader = async ({ request }) => {
                   }
                 }
               }
-              productsCount {
-                count
-              }
             }
           }
+        }`;
+      const variables = endCursor ? { after: endCursor } : {};
+      const response = await admin.graphql(collectionsQuery, { variables });
+      const json = await response.json();
+      const data = json.data.collections;
+      for (const edge of data.edges) {
+        const collection = edge.node;
+        // Deep paginate metafields if needed
+        let metafields = [...(collection.metafields?.edges || [])];
+        let metafieldsHasNextPage = collection.metafields?.pageInfo?.hasNextPage;
+        let metafieldsEndCursor = collection.metafields?.pageInfo?.endCursor;
+        while (metafieldsHasNextPage) {
+          const metafieldsQuery = `#graphql
+            query GetMetafields($id: ID!, $after: String) {
+              collection(id: $id) {
+                metafields(first: 10, namespace: \"custom\", after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  edges {
+                    node {
+                      id
+                      namespace
+                      key
+                      type
+                      value
+                      references(first: 50) {
+                        pageInfo { hasNextPage endCursor }
+                        edges {
+                          node {
+                            ... on Collection {
+                              id
+                              title
+                              handle
+                              image { url }
+                              productsCount { count }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }`;
+          const metafieldsResp = await admin.graphql(metafieldsQuery, { variables: { id: collection.id, after: metafieldsEndCursor } });
+          const metafieldsJson = await metafieldsResp.json();
+          const newEdges = metafieldsJson.data.collection.metafields.edges;
+          metafields = metafields.concat(newEdges);
+          metafieldsHasNextPage = metafieldsJson.data.collection.metafields.pageInfo.hasNextPage;
+          metafieldsEndCursor = metafieldsJson.data.collection.metafields.pageInfo.endCursor;
         }
-      }`
-    );
+        // Deep paginate references for each metafield
+        for (const metaEdge of metafields) {
+          const metafield = metaEdge.node;
+          let references = [...(metafield.references?.edges || [])];
+          let referencesHasNextPage = metafield.references?.pageInfo?.hasNextPage;
+          let referencesEndCursor = metafield.references?.pageInfo?.endCursor;
+          while (referencesHasNextPage) {
+            const referencesQuery = `#graphql
+              query GetReferences($id: ID!, $metaId: ID!, $after: String) {
+                collection(id: $id) {
+                  metafield(id: $metaId) {
+                    references(first: 50, after: $after) {
+                      pageInfo { hasNextPage endCursor }
+                      edges {
+                        node {
+                          ... on Collection {
+                            id
+                            title
+                            handle
+                            image { url }
+                            productsCount { count }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }`;
+            const referencesResp = await admin.graphql(referencesQuery, { variables: { id: collection.id, metaId: metafield.id, after: referencesEndCursor } });
+            const referencesJson = await referencesResp.json();
+            const newEdges = referencesJson.data.collection.metafield.references.edges;
+            references = references.concat(newEdges);
+            referencesHasNextPage = referencesJson.data.collection.metafield.references.pageInfo.hasNextPage;
+            referencesEndCursor = referencesJson.data.collection.metafield.references.pageInfo.endCursor;
+          }
+          metafield.references = { edges: references };
+        }
+        collection.metafields = { edges: metafields };
+        collections.push(collection);
+      }
+      hasNextPage = data.pageInfo.hasNextPage;
+      endCursor = data.pageInfo.endCursor;
+    }
+    return collections;
+  }
 
-    const collectionsJson = await collectionsResponse.json();
-    
+  try {
+    // Fetch all collections with all metafields and all references
+    const collections = await fetchAllCollections();
     // Extract and process the collections data
-    const collections = collectionsJson.data.collections.edges.map(edge => {
-      const collection = edge.node;
-      
+    const processed = collections.map(collection => {
       // Find subcategories metafield
       const subcategoriesMetafield = collection.metafields.edges.find(
         metaEdge => metaEdge.node.namespace === "custom" && metaEdge.node.key === "subcat"
       );
-      
       // Extract subcategories if they exist
       let subcategories = [];
       if (subcategoriesMetafield && subcategoriesMetafield.node.references) {
         subcategories = subcategoriesMetafield.node.references.edges.map(refEdge => refEdge.node);
       }
-      
       return {
         ...collection,
         subcategories,
@@ -111,7 +201,7 @@ export const loader = async ({ request }) => {
     });
     
     return json({
-      collections,
+      collections: processed,
       error: null
     });
   } catch (error) {
@@ -423,6 +513,12 @@ export default function Index() {
   const [subcatType, setSubcatType] = useState("");
   const [subcatRules, setSubcatRules] = useState([{ column: "TITLE", relation: "EQUALS", condition: "", value: "" }]);
   const [subcatGlobalCondition, setSubcatGlobalCondition] = useState("AND");
+  const [searchValue, setSearchValue] = useState('');
+  const [filteredCollections, setFilteredCollections] = useState(collections);
+  
+  // --- Add constant for IndexFilters tabs and selected index ---
+  const indexFiltersTabs = [{ id: 'all', content: 'All', isLocked: true }];
+  const indexFiltersSelected = 0;
   
   // When returning from an edit page, open the accordion of the collection that was edited.
   useEffect(() => {
@@ -583,6 +679,19 @@ export default function Index() {
     }
   }, [actionData]);
   
+  // Update filtered collections as searchValue or collections change
+  useEffect(() => {
+    if (!searchValue || !searchValue.trim()) {
+      setFilteredCollections(collections);
+    } else {
+      setFilteredCollections(
+        collections.filter((col) =>
+          col.title.toLowerCase().includes(searchValue.trim().toLowerCase())
+        )
+      );
+    }
+  }, [searchValue, collections]);
+  
   if (error) {
     return (
       <Page title="Collections">
@@ -660,31 +769,59 @@ export default function Index() {
       }}
       image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
     >
-      <p>Group products into categories and subcategories to make them easier for customers to find.</p>
+      <p>Group products into categories and subcategories to make them easier for you to find.</p>
     </EmptyState>
   );
 
   return (
     <Page
-      title="Collections Managers"
+      title="Collections Manager"
       primaryAction={{
         content: "Create Collection",
         onAction: () => setIsCreateCollectionOpen(true),
         disabled: isLoading,
       }}
-      secondaryActions={[
-        {
-          content: "Create Subcategory",
-          onAction: () => setIsCreateSubcatOpen(true),
-          disabled: isLoading,
-        }
-      ]}
+      secondaryActions={
+        collections.length > 0
+          ? [
+              {
+                content: "Create Subcategory",
+                onAction: () => setIsCreateSubcatOpen(true),
+                disabled: isLoading,
+              },
+            ]
+          : []
+      }
     >
       {banner && (
         <div style={{ marginBottom: 16 }}>
           {banner}
         </div>
       )}
+      {/* Polaris Filters search bar */}
+      <Box paddingBlockEnd="400">
+        <div
+          style={{
+            marginBottom: '0',
+            borderRadius: '16px',
+            overflow: 'hidden',
+            backgroundColor: '#fff',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
+            alignItems: 'center',
+            padding: '0',
+          }}
+        >
+          <Filters
+            queryValue={searchValue}
+            onQueryChange={setSearchValue}
+            onQueryClear={() => setSearchValue('')}
+            filters={[]}
+            appliedFilters={[]}
+            disabled={false}
+            queryPlaceholder="Search collections"
+          />
+        </div>
+      </Box>
       <Modal
         open={isCreateCollectionOpen}
         onClose={() => setIsCreateCollectionOpen(false)}
@@ -1001,16 +1138,16 @@ export default function Index() {
 
       <Layout>
         <Layout.Section>
-          {isLoading && !collections.length ? (
+          {isLoading && !filteredCollections.length ? (
             <div style={{ textAlign: 'center', padding: '20px' }}>
               <Spinner accessibilityLabel="Loading collections" size="large" />
             </div>
           ) : (
             <BlockStack gap="500">
-              {collections.length === 0 ? (
+              {filteredCollections.length === 0 ? (
                 emptyStateMarkup
               ) : (
-                collections.map((collection) => (
+                filteredCollections.map((collection) => (
                   <Card key={collection.id}>
                     <Box padding="400">
                       <InlineStack align="space-between" blockAlign="center" wrap={false}>

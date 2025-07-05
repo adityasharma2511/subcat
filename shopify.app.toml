@@ -3,16 +3,20 @@
 client_id = "b210868519badacaf28ab2774abf9846"
 name = "Collection Tree"
 handle = "am-collection-tree"
-application_url = "https://generations-portion-smart-apply.trycloudflare.com"
+application_url = "https://photograph-reunion-jvc-maple.trycloudflare.com"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
-dev_store_url = "chichaus-essentials.myshopify.com"
+dev_store_url = "aditya-root.myshopify.com"
 include_config_on_deploy = true
 
 [webhooks]
 api_version = "2024-10"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "https://moss-holly-balanced-mac.trycloudflare.com/webhooks/app/subscription_update"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
@@ -27,10 +31,10 @@ api_version = "2024-10"
 scopes = "read_publications,write_files,write_products,write_publications"
 
 [auth]
-redirect_urls = ["https://generations-portion-smart-apply.trycloudflare.com/auth/callback", "https://generations-portion-smart-apply.trycloudflare.com/auth/shopify/callback", "https://generations-portion-smart-apply.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://photograph-reunion-jvc-maple.trycloudflare.com/auth/callback", "https://photograph-reunion-jvc-maple.trycloudflare.com/auth/shopify/callback", "https://photograph-reunion-jvc-maple.trycloudflare.com/api/auth/callback"]
 
 [app_proxy]
-url = "https://generations-portion-smart-apply.trycloudflare.com/frontrequest"
+url = "https://photograph-reunion-jvc-maple.trycloudflare.com/frontrequest"
 subpath = "aditya"
 prefix = "apps"
 

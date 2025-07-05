@@ -49,7 +49,7 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
-        <Link to="/app/products">Products</Link>
+        {/* <Link to="/app/products">Products</Link> */}
         <Link to="/app/dashboard">Collections</Link>
         <Link to="/app/widget">Widget</Link>
         <Link to="/app/pricing">Pricing</Link>

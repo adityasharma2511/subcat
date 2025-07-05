@@ -14,8 +14,18 @@ export const action = async ({ request }) => {
     const db = client.db("shopify-app");
     const result = await db.collection("shopify_sessions").deleteMany({ shop });
     console.log(`Deleted ${result.deletedCount} session(s) for shop: ${shop}`);
+    // Improved upsert: set status/updatedAt always, set shop/createdAt only if new
+    const subResult = await db.collection("subscriptions").updateOne(
+      { shop },
+      {
+        $set: { status: "cancelled", updatedAt: new Date() },
+        $setOnInsert: { shop, createdAt: new Date() }
+      },
+      { upsert: true }
+    );
+    console.log(`Subscription status set to 'cancelled' for shop: ${shop}`, subResult);
   } catch (err) {
-    console.error(`Error deleting shopify_sessions for ${shop}:`, err);
+    console.error(`Error handling uninstall for ${shop}:`, err);
   } finally {
     await client.close();
   }
